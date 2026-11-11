@@ -41,3 +41,14 @@ Primary Android references:
 - No Xiaomi name on the car waiting screen; generic "Выбери фильм".
 - Audio FGS manual rescue button is tucked inside the separate diagnostic screen ("Лог" → "Звук для ГУ"). This is for Android 16 builds where a car-initiated foreground service start is rejected.
 - Updated preview package ID to `dev.geely.carvideo.preview081`; code reference includes the optional FIT graphical renderer and safe-area behavior. Still requires actual Geely testing.
+
+## CarVideo 0.8.2 — compact Xiaomi UI (requires device acceptance)
+Based on owner's screenshot of 0.8.1:
+- MainActivity and DiagnosticsActivity handle Android 15/16 status and gesture bar safe-area insets via WindowInsets; Log button is no longer positioned under battery icons.
+- More compact title/header. Empty now-playing card hides transport and seek controls until movie selected; settings speed and aspect controls are behind a gear button.
+- Compact 57dp thumbnail movie rows and inline folder/refresh actions allow more movies per screen.
+- Titles are cleaned for display only (year preserved and release tags separated), without renaming any source files or changing content URIs.
+- Real frame thumbnails from MediaMetadataRetriever when SAF provider doesn't return them. Off-main-thread worker and disk cache are retained.
+- Geely library titles are cleaned; no changes to playback service, foreground audio, video Surface, rear camera or per-file bookmark handling.
+- Preview package dev.geely.carvideo.preview082; short Android Auto label CV 082. Separate from 0.8.1 and verified 0.7.1.
+- CI compilation and Android car acceptance are different milestones; do not call this production release before vehicle verification.

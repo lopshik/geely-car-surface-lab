@@ -69,7 +69,22 @@ public final class DiagnosticsActivity extends Activity {
         root.setBackgroundColor(BG);
         root.setPadding(dp(18),dp(18),dp(18),dp(12));
         root.setOrientation(LinearLayout.VERTICAL);
+        root.setOnApplyWindowInsetsListener((v,insets) -> {
+            int top,bottom;
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets safe = insets.getInsets(
+                        android.view.WindowInsets.Type.systemBars() |
+                        android.view.WindowInsets.Type.displayCutout());
+                top=safe.top; bottom=safe.bottom;
+            } else {
+                top=insets.getSystemWindowInsetTop();
+                bottom=insets.getSystemWindowInsetBottom();
+            }
+            v.setPadding(dp(18),top+dp(12),dp(18),bottom+dp(12));
+            return insets;
+        });
         setContentView(root);
+        root.requestApplyInsets();
 
         TextView title = new TextView(this);
         title.setText("‹  Диагностика");

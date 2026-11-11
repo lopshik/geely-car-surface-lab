@@ -92,7 +92,7 @@ public final class MediaCatalog {
     /** Clean only the visible movie title, never rename the actual file. */
     public static String displayTitle(String raw) {
         if (raw == null || raw.trim().isEmpty()) return "Видео";
-        String readable = prettyName(raw).replace('.', ' ').replace('_', ' ')
+        String readable = raw.replace('.', ' ').replace('_', ' ')
                 .replaceAll("\\s+", " ").trim();
         // Most releases contain a year followed by encoding/rip metadata.
         java.util.regex.Matcher year = java.util.regex.Pattern.compile(
