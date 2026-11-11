@@ -5,6 +5,22 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Size;
+import android.util.LruCache;
+import android.os.Handler;
+import android.os.Looper;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
@@ -33,6 +49,11 @@ import java.util.List;
 public final class MediaCatalog {
     private static final String TAG = "CarVideo.Catalog";
     private static final int LIMIT = 250;
+    private static final ExecutorService POSTER_WORKER = Executors.newSingleThreadExecutor();
+    private static final Handler UI = new Handler(Looper.getMainLooper());
+    private static final LruCache<String,Bitmap> POSTER_CACHE = new LruCache<>(24);
+    private static final Set<String> THUMB_PENDING = Collections.synchronizedSet(new HashSet<>());
+    private static final Set<String> THUMB_FAILED = Collections.synchronizedSet(new HashSet<>());
 
     public static final class Entry {
         public final String uri, title, folder;
@@ -127,6 +148,19 @@ public final class MediaCatalog {
                         cursor.isNull(durationCol) ? 0 : cursor.getLong(durationCol));
                 result.put(e.json());
             }
+            // A fresh MediaStore scan must not silently remove files added with
+            // ACTION_OPEN_DOCUMENT. Keep the separately persisted SAF entries.
+            JSONArray manual = new JSONArray(prefs(c).getString("manual_catalog", "[]"));
+            HashSet<String> scanned = new HashSet<>();
+            for (int i = 0; i < result.length(); i++) {
+                scanned.add(result.getJSONObject(i).optString("uri"));
+            }
+            for (int i = 0; i < manual.length() && result.length() < LIMIT; i++) {
+                JSONObject j = manual.optJSONObject(i);
+                if (j == null) continue;
+                String uri = j.optString("uri");
+                if (!uri.isEmpty() && scanned.add(uri)) result.put(j);
+            }
             prefs(c).edit().putString("catalog", result.toString())
                     .putLong("catalog_scanned", System.currentTimeMillis()).apply();
             return result.length();
@@ -156,7 +190,15 @@ public final class MediaCatalog {
             for (Entry prev : entries) {
                 if (!prev.uri.equals(e.uri) && array.length() < LIMIT) array.put(prev.json());
             }
-            prefs(c).edit().putString("catalog", array.toString()).apply();
+            JSONArray oldManual = new JSONArray(prefs(c).getString("manual_catalog", "[]"));
+            JSONArray manual = new JSONArray();
+            manual.put(e.json());
+            for (int i = 0; i < oldManual.length() && manual.length() < 60; i++) {
+                JSONObject m = oldManual.optJSONObject(i);
+                if (m != null && !e.uri.equals(m.optString("uri"))) manual.put(m);
+            }
+            prefs(c).edit().putString("catalog", array.toString())
+                    .putString("manual_catalog", manual.toString()).apply();
         } catch (JSONException ignored) {}
         return e;
     }
@@ -165,6 +207,106 @@ public final class MediaCatalog {
         // Clearing interruption is intentional user selection, not a gear change.
         prefs(c).edit().putBoolean("resume_interrupted", false)
                 .putString("video_uri", e.uri).apply();
+    }
+
+    public static boolean favorite(Context c, Entry e) {
+        return prefs(c).getStringSet("favorites", Collections.emptySet()).contains(e.uri);
+    }
+
+    public static boolean toggleFavorite(Context c, Entry e) {
+        Set<String> values = new HashSet<>(prefs(c).getStringSet("favorites", Collections.emptySet()));
+        boolean nowFavorite;
+        if (values.contains(e.uri)) { values.remove(e.uri); nowFavorite = false; }
+        else { values.add(e.uri); nowFavorite = true; }
+        prefs(c).edit().putStringSet("favorites", values).apply();
+        return nowFavorite;
+    }
+
+    public static List<Entry> filtered(Context c, boolean favoritesOnly, String folder, String query) {
+        String q = query == null ? "" : query.toLowerCase(Locale.ROOT).trim();
+        List<Entry> items = new ArrayList<>();
+        for (Entry e : all(c)) {
+            if (favoritesOnly && !favorite(c,e)) continue;
+            if (folder != null && !folder.equals(e.folder)) continue;
+            if (!q.isEmpty() && !(e.title + " " + e.folder).toLowerCase(Locale.ROOT).contains(q)) continue;
+            items.add(e);
+        }
+        return items;
+    }
+
+    public static List<String> folders(Context c) {
+        Set<String> set = new LinkedHashSet<>();
+        for (Entry e : all(c)) set.add(e.folder);
+        ArrayList<String> list = new ArrayList<>(set);
+        list.sort(String.CASE_INSENSITIVE_ORDER);
+        return list;
+    }
+
+    public static int folderCount(Context c, String folder) {
+        int count = 0;
+        for (Entry e : all(c)) if (folder.equals(e.folder)) count++;
+        return count;
+    }
+
+    /** Cache-only fast path for Android Auto's binder thread. Never decode video there. */
+    public static Bitmap poster(Context c, Entry e) {
+        Bitmap cache = POSTER_CACHE.get(e.uri);
+        if (cache != null) return cache;
+        try {
+            File file = posterFile(c,e);
+            if (file.isFile()) {
+                Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+                if (bitmap != null) {
+                    POSTER_CACHE.put(e.uri,bitmap);
+                    return bitmap;
+                }
+            }
+        } catch (Exception ignored) {}
+        return poster(e);
+    }
+
+    private static File posterFile(Context c, Entry e) {
+        File dir = new File(c.getCacheDir(), "movie-posters");
+        if (!dir.exists()) dir.mkdirs();
+        return new File(dir,
+            PlaybackForegroundService.positionKey(Uri.parse(e.uri)) + ".jpg");
+    }
+
+    /** Work happens off the UI thread. No continuous scans or wake locks. */
+    public static void preparePoster(Context context, Entry e, Consumer<Bitmap> onReady) {
+        Context app = context.getApplicationContext();
+        if (e.uri == null || e.uri.isEmpty()) return;
+        File file = posterFile(app,e);
+        if (file.isFile()) {
+            if (onReady != null) UI.post(() -> onReady.accept(poster(app,e)));
+            return;
+        }
+        if (THUMB_FAILED.contains(e.uri) || !THUMB_PENDING.add(e.uri)) return;
+        POSTER_WORKER.execute(() -> {
+            try {
+                Bitmap thumbnail;
+                Uri uri = Uri.parse(e.uri);
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    thumbnail = app.getContentResolver().loadThumbnail(uri, new Size(200,200), null);
+                } else {
+                    thumbnail = MediaStore.Video.Thumbnails.getThumbnail(app.getContentResolver(),
+                        android.content.ContentUris.parseId(uri), MediaStore.Video.Thumbnails.MINI_KIND, null);
+                }
+                if (thumbnail != null) {
+                    File out = posterFile(app,e);
+                    try (FileOutputStream stream = new FileOutputStream(out)) {
+                        thumbnail.compress(Bitmap.CompressFormat.JPEG, 74, stream);
+                    }
+                    POSTER_CACHE.put(e.uri,thumbnail);
+                    if (onReady != null) UI.post(() -> onReady.accept(thumbnail));
+                }
+            } catch (Exception ex) {
+                THUMB_FAILED.add(e.uri);
+                Log.d(TAG,"No thumbnail for "+e.title+": "+ex.getClass().getSimpleName());
+            } finally {
+                THUMB_PENDING.remove(e.uri);
+            }
+        });
     }
 
     public static String time(long ms) {
