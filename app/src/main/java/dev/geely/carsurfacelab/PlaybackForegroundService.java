@@ -261,7 +261,7 @@ public final class PlaybackForegroundService extends Service {
         }
     }
 
-    private static String positionKey(Uri uri) {
+    public static String positionKey(Uri uri) {
         // Stable across reconnects/restarts and resistant to path collisions.
         try {
             byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
