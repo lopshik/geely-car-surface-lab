@@ -96,10 +96,10 @@ public final class PlaybackForegroundService extends Service {
     private void report(String status) {
         Log.i(TAG, status);
         prefs().edit().putString("audio_diagnostics", status
-                + "\\nAudio focus: " + focusName(focusResult)
-                + "\\nMedia volume: " + audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                + "\nAudio focus: " + focusName(focusResult)
+                + "\nMedia volume: " + audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                 + "/" + audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                + "\\nMusic active: " + audioManager.isMusicActive()).apply();
+                + "\nMusic active: " + audioManager.isMusicActive()).apply();
     }
 
     private static String focusName(int result) {
@@ -167,8 +167,9 @@ public final class PlaybackForegroundService extends Service {
                     updateSession(true);
                     report("Playing; audio tracks=" + audioTracks +
                             "; audio session=" + p.getAudioSessionId() + route(p));
+                    final int count = audioTracks;
                     handler.postDelayed(() -> {
-                        if (player == p) report("Playing after 2s; audio tracks=" + audioTracks + route(p));
+                        if (player == p) report("Playing after 2s; audio tracks=" + count + route(p));
                     }, 2000);
                 } catch (RuntimeException e) {
                     report("Player start error: " + e.getClass().getSimpleName());
