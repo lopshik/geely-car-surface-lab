@@ -95,11 +95,16 @@ public final class PlaybackForegroundService extends Service {
 
     private void report(String status) {
         Log.i(TAG, status);
-        prefs().edit().putString("audio_diagnostics", status
+        SharedPreferences sp = prefs();
+        String record = sp.getString("audio_events", "") +
+                new java.util.Date() + " | " + status + " | focus=" + focusName(focusResult) + "\n";
+        if (record.length() > 5200) record = record.substring(record.length() - 5200);
+        sp.edit().putString("audio_diagnostics", status
                 + "\nAudio focus: " + focusName(focusResult)
                 + "\nMedia volume: " + audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                 + "/" + audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                + "\nMusic active: " + audioManager.isMusicActive()).apply();
+                + "\nMusic active: " + audioManager.isMusicActive())
+                .putString("audio_events", record).apply();
     }
 
     private static String focusName(int result) {

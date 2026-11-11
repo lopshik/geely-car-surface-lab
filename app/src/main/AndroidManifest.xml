@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="Car Surface Lab v0.3"
+        android:label="Car Surface Lab v0.4"
         android:icon="@android:drawable/ic_media_play"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false">

@@ -30,7 +30,7 @@ public class MainActivity extends Activity {
         scroll.addView(layout);
 
         TextView title = new TextView(this);
-        title.setText("Car Surface Lab v0.3\nUSB / Surface / no Shizuku");
+        title.setText("Car Surface Lab v0.4\nUSB / Surface / no Shizuku");
         title.setTextSize(24);
         layout.addView(title);
 
@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
         layout.addView(clear, new LinearLayout.LayoutParams(-1, -2));
 
         TextView audioHeading = new TextView(this);
-        audioHeading.setText("Аудиосервис Android Auto (запусти перед поездкой)");
+        audioHeading.setText("Аудиосервис Android Auto (для проверки звука)");
         audioHeading.setTextSize(18);
         audioHeading.setPadding(0, 28, 0, 8);
         layout.addView(audioHeading);
@@ -114,7 +114,7 @@ public class MainActivity extends Activity {
         layout.addView(copy, new LinearLayout.LayoutParams(-1, -2));
 
         TextView help = new TextView(this);
-        help.setText("Для первого теста оставь режим сетки, затем открой приложение в Android Auto. "
+        help.setText("Для первого теста открой сетку в Android Auto, затем выбери MP4 на телефоне при подключённом USB. Видеоплеер должен переключиться без переподключения. "
             + "После подключения вернись на телефон и скопируй диагностику. "
             + "Для проверки звука до подключения нажми «Включить аудиосервис». Fermata и AnyAuto не изменяются. Проверять на стоянке.");
         help.setPadding(0, 20, 0, 0);
@@ -137,9 +137,14 @@ public class MainActivity extends Activity {
                 .getString("diagnostics", "Ещё не подключалось к Android Auto");
         String audio = getSharedPreferences("lab", MODE_PRIVATE)
                 .getString("audio_diagnostics", "Аудиосервис ещё не запускался");
+        String audioEvents = getSharedPreferences("lab", MODE_PRIVATE).getString("audio_events", "");
+        String screenEvents = getSharedPreferences("lab", MODE_PRIVATE).getString("screen_events", "");
         diagnostic.setText("Package: " + getPackageName()
                 + "\nAudio service running: " + (PlaybackForegroundService.active() != null)
-                + "\n" + audio + "\n---- Screen ----\n" + report);
+                + "\n" + audio
+                + "\n---- Screen ----\n" + report
+                + "\n---- Audio event history ----\n" + audioEvents
+                + "\n---- Surface event history ----\n" + screenEvents);
     }
 
     @Override

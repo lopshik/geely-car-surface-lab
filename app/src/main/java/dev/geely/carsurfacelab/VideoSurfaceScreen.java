@@ -8,6 +8,8 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
+import android.os.Handler;
+import android.os.Looper;
 import android.net.Uri;
 import android.util.Log;
 import android.view.Surface;
@@ -36,15 +38,32 @@ public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
     private final Rect stable = new Rect(), visible = new Rect();
     private boolean videoMode;
     private boolean closed;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final SharedPreferences.OnSharedPreferenceChangeListener selectionListener =
+            (prefs, key) -> {
+                if (!"video_uri".equals(key)) return;
+                mainHandler.post(() -> {
+                    if (closed) return;
+                    if (surface != null && surface.isValid()) {
+                        saveStatus("File selected: switching source on existing Surface");
+                        startSelectedSource();
+                    } else {
+                        saveStatus("File selected: Surface not available yet");
+                    }
+                });
+            };
 
     public VideoSurfaceScreen(@NonNull CarContext carContext) {
         super(carContext);
         carContext.getCarService(AppManager.class).setSurfaceCallback(this);
+        prefs().registerOnSharedPreferenceChangeListener(selectionListener);
         saveStatus("CarAppService session opened");
         getLifecycle().addObserver(new DefaultLifecycleObserver() {
             @Override
             public void onDestroy(@NonNull LifecycleOwner owner) {
                 closed = true;
+                prefs().unregisterOnSharedPreferenceChangeListener(selectionListener);
+                mainHandler.removeCallbacksAndMessages(null);
                 releasePlayer();
                 surface = null;
                 carContext.getCarService(AppManager.class).setSurfaceCallback(null);
@@ -81,21 +100,38 @@ public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
             return;
         }
         saveStatus("Surface available: " + width + "x" + height + " dpi=" + container.getDpi());
+        startSelectedSource();
+    }
+
+    /**
+     * The Android Auto Surface remains available when the user returns to the phone
+     * and chooses a movie. v0.3 only checked the selection at Surface creation, so
+     * users had to unplug and reconnect USB. Re-use the same live Surface instead.
+     */
+    private void startSelectedSource() {
+        if (closed || surface == null || !surface.isValid()) {
+            saveStatus("Selection changed, no usable Surface");
+            return;
+        }
+        releasePlayer();
         String video = prefs().getString("video_uri", null);
-        videoMode = video != null;
-        if (!videoMode) drawTestPattern();
-        else {
-            PlaybackForegroundService service = PlaybackForegroundService.active();
-            if (service != null) {
-                servicePlayback = true;
-                saveStatus("Foreground service: using audio focus player");
-                service.play(Uri.parse(video), surface);
-            } else {
-                servicePlayback = false;
-                prefs().edit().putString("audio_diagnostics",
-                        "Foreground service OFF; video plays with v0.2 fallback (sound not guaranteed)").apply();
-                playVideo(Uri.parse(video));
-            }
+        videoMode = video != null && !video.isEmpty();
+        if (!videoMode) {
+            saveStatus("No file selected: drawing test grid");
+            drawTestPattern();
+            return;
+        }
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) {
+            servicePlayback = true;
+            saveStatus("Playing selected file through foreground service");
+            service.play(Uri.parse(video), surface);
+        } else {
+            servicePlayback = false;
+            prefs().edit().putString("audio_diagnostics",
+                    "Foreground service OFF; using fallback MediaPlayer").apply();
+            saveStatus("Playing selected file using fallback MediaPlayer");
+            playVideo(Uri.parse(video));
         }
     }
 
@@ -110,7 +146,11 @@ public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
                 + "\nVisible: " + visible.toShortString()
                 + "\nStable: " + stable.toShortString()
                 + "\nMode: " + (videoMode ? "video" : "test pattern");
-        prefs().edit().putString("diagnostics", report).apply();
+        SharedPreferences p = prefs();
+        String old = p.getString("screen_events", "");
+        String history = old + new Date() + " | " + event + "\n";
+        if (history.length() > 5200) history = history.substring(history.length() - 5200);
+        p.edit().putString("diagnostics", report).putString("screen_events", history).apply();
     }
 
     private void playVideo(Uri uri) {
@@ -176,7 +216,7 @@ public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
             p.setStyle(Paint.Style.FILL);
             p.setColor(Color.WHITE);
             p.setTextSize(Math.max(26, Math.min(w / 22f, h / 9f)));
-            c.drawText("CAR SURFACE LAB v0.2", 22, Math.max(56, h / 2f), p);
+            c.drawText("CAR SURFACE LAB v0.4", 22, Math.max(56, h / 2f), p);
             p.setTextSize(Math.max(20, Math.min(w / 35f, h / 15f)));
             c.drawText("Canvas " + w + " x " + h + " | no Shizuku", 22,
                     Math.max(95, h / 2f + 55), p);
