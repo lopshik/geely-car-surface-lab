@@ -28,6 +28,9 @@ import android.graphics.Shader;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.MediaStore;
+import android.provider.DocumentsContract;
+import java.util.Comparator;
+import java.util.Locale;
 import android.provider.OpenableColumns;
 import android.util.Log;
 
@@ -114,6 +117,71 @@ public final class MediaCatalog {
                     prettyName(Uri.parse(selected).getLastPathSegment()), "Выбранный файл", 0));
         }
         return result;
+    }
+
+    /** Scan only the user-chosen folder. No broad storage or media permissions. */
+    public static int scanFolder(Context context) {
+        String treeText = prefs(context).getString("video_folder_uri", null);
+        if (treeText == null) {
+            prefs(context).edit().putString("catalog_error", "Папка не выбрана").apply();
+            return -1;
+        }
+        ArrayList<Entry> movies = new ArrayList<>();
+        try {
+            Uri tree = Uri.parse(treeText);
+            String folderId = DocumentsContract.getTreeDocumentId(tree);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, folderId);
+            String[] projection = { DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE };
+            try (Cursor cursor = context.getContentResolver()
+                    .query(children, projection, null, null, null)) {
+                if (cursor == null) throw new IllegalStateException("Папка недоступна");
+                int id = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                int name = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                int mime = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE);
+                while (cursor.moveToNext() && movies.size() < LIMIT) {
+                    String docId = cursor.getString(id);
+                    String filename = cursor.getString(name);
+                    String type = cursor.getString(mime);
+                    if (filename == null || docId == null) continue;
+                    String lower = filename.toLowerCase(Locale.ROOT);
+                    boolean supported = type != null && type.startsWith("video/");
+                    if (!supported) supported = lower.endsWith(".mp4") ||
+                            lower.endsWith(".mkv") || lower.endsWith(".avi") ||
+                            lower.endsWith(".webm") || lower.endsWith(".mov") ||
+                            lower.endsWith(".m4v") || lower.endsWith(".3gp") ||
+                            lower.endsWith(".ts");
+                    if (!supported) continue;
+                    String fileUri = DocumentsContract.buildDocumentUriUsingTree(tree,docId).toString();
+                    movies.add(new Entry(fileUri,prettyName(filename),"Видео",0));
+                }
+            }
+            movies.sort(Comparator.comparing(e -> e.title.toLowerCase(Locale.ROOT)));
+            JSONArray json = new JSONArray();
+            for (Entry e : movies) json.put(e.json());
+            prefs(context).edit().putString("catalog",json.toString())
+                    .putLong("catalog_scanned",System.currentTimeMillis())
+                    .remove("catalog_error").apply();
+            return movies.size();
+        } catch (Exception e) {
+            Log.e(TAG,"Selected video directory scan failed",e);
+            prefs(context).edit().putString("catalog_error",
+                    e.getClass().getSimpleName() + ": " + e.getMessage()).apply();
+            return -1;
+        }
+    }
+
+    public static String folderLabel(Context context) {
+        String raw = prefs(context).getString("video_folder_uri",null);
+        if (raw == null) return "Выбрать папку";
+        try {
+            String id = DocumentsContract.getTreeDocumentId(Uri.parse(raw));
+            int slash = id.lastIndexOf('/');
+            int colon = id.lastIndexOf(':');
+            return slash >= 0 ? id.substring(slash+1) :
+                    colon >= 0 ? id.substring(colon+1) : id;
+        } catch (RuntimeException e) { return "Папка видео"; }
     }
 
     /** Called on a background worker, not on the UI thread. */
