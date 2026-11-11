@@ -54,8 +54,9 @@ public final class CarLibraryScreen extends Screen {
         int end = Math.min(movies.size(), start + perPage);
         for (int i = start; i < end; i++) {
             MediaCatalog.Entry entry = movies.get(i);
-            String title = entry.title.length() > 42
-                    ? entry.title.substring(0, 41) + "…" : entry.title;
+            String cleanTitle = MediaCatalog.displayTitle(entry.title);
+            String title = cleanTitle.length() > 42
+                    ? cleanTitle.substring(0, 41) + "…" : cleanTitle;
             tile(list, title, icon(entry), () -> open(entry));
         }
         if (movies.isEmpty()) {

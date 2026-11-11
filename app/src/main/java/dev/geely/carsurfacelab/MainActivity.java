@@ -171,6 +171,7 @@ public final class MainActivity extends Activity {
         playbackControls = new LinearLayout(this);
         playbackControls.setOrientation(LinearLayout.VERTICAL);
         hero.addView(playbackControls);
+        playbackControls.setVisibility(View.GONE);
 
         timeline = new SeekBar(this);
         timeline.setMax(1000);

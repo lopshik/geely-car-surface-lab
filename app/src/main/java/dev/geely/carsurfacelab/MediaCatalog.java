@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.media.MediaMetadataRetriever;
 import android.util.Size;
 import android.util.LruCache;
 import android.os.Handler;
@@ -86,6 +87,46 @@ public final class MediaCatalog {
         int dot = n.lastIndexOf('.');
         if (dot > 0 && n.length() - dot < 8) n = n.substring(0, dot);
         return n;
+    }
+
+    /** Clean only the visible movie title, never rename the actual file. */
+    public static String displayTitle(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "Видео";
+        String readable = prettyName(raw).replace('.', ' ').replace('_', ' ')
+                .replaceAll("\\s+", " ").trim();
+        // Most releases contain a year followed by encoding/rip metadata.
+        java.util.regex.Matcher year = java.util.regex.Pattern.compile(
+                "(?<!\\d)((?:19|20)\\d{2})(?!\\d)").matcher(readable);
+        if (year.find()) {
+            String prefix = readable.substring(0,year.start()).trim()
+                    .replaceAll("(?i)\\s+(BDRip|HDRip|WEB|D)$","").trim();
+            if (!prefix.isEmpty()) {
+                return prefix + " (" + year.group(1) + ")";
+            }
+        }
+        readable = readable.replaceFirst(
+                "(?i)\\s+(BDRip|HDRip|WEB[- ]?DL|BluRay|2160p|1080p|720p|4K|HEVC|H264|H265|x264|x265|SDR|HDR)\\b.*$",
+                "").trim();
+        return readable.isEmpty()?prettyName(raw):readable;
+    }
+
+    /** Minimal secondary metadata; never repeat the unreadable raw release name. */
+    public static String subtitle(Context c, Entry movie) {
+        String original = movie.title == null?"":movie.title;
+        String quality = "";
+        if (original.matches("(?is).*\\b(2160p|4K)\\b.*")) quality = "4K";
+        else if (original.matches("(?is).*\\b1080p\\b.*")) quality = "1080p";
+        else if (original.matches("(?is).*\\b720p\\b.*")) quality = "720p";
+        long resumeMs = 0;
+        try {
+            resumeMs = prefs(c).getLong(
+                    PlaybackForegroundService.positionKey(Uri.parse(movie.uri)),0);
+        } catch (RuntimeException ignored) {}
+        if (resumeMs > 10000) {
+            return "Продолжить с " + time(resumeMs) +
+                    (quality.isEmpty()?"":"  ·  "+quality);
+        }
+        return quality;
     }
 
     public static Entry selected(Context c) {
@@ -298,8 +339,46 @@ public final class MediaCatalog {
             PlaybackForegroundService.positionKey(Uri.parse(e.uri)) + ".jpg");
     }
 
-    /** Work happens off the UI thread. No continuous scans or wake locks. */
-    public static void preparePoster(Context context, Entry e, Consumer<Bitmap> onReady) {
+    /**
+     * Try provider thumbnail first. Many SAF document providers never return one,
+     * so retrieve a representative frame off the UI thread as a fallback.
+     */
+    private static Bitmap loadVideoThumbnail(Context c,Uri uri) {
+        try {
+            Bitmap b;
+            if (Build.VERSION.SDK_INT >= 29) {
+                b = c.getContentResolver().loadThumbnail(uri,new Size(240,160),null);
+            } else if ("media".equals(uri.getAuthority())) {
+                b = MediaStore.Video.Thumbnails.getThumbnail(c.getContentResolver(),
+                        ContentUris.parseId(uri),MediaStore.Video.Thumbnails.MINI_KIND,null);
+            } else b = null;
+            if (b != null) return b;
+        } catch (Exception e) {
+            Log.d(TAG,"Provider has no thumbnail: "+e.getClass().getSimpleName());
+        }
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(c,uri);
+            if (Build.VERSION.SDK_INT >= 27) {
+                return retriever.getScaledFrameAtTime(1000000,
+                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC,240,160);
+            }
+            Bitmap full = retriever.getFrameAtTime(1000000,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            if (full == null) return null;
+            Bitmap scaled = Bitmap.createScaledBitmap(full,240,160,true);
+            if (scaled != full) full.recycle();
+            return scaled;
+        } catch (Exception e) {
+            Log.d(TAG,"Video frame unavailable: "+e.getClass().getSimpleName());
+            return null;
+        } finally {
+            try {retriever.release();} catch (Exception ignored) {}
+        }
+    }
+
+    /** Work happens on a single worker, never on Android Auto's binder or UI thread. */
+    public static void preparePoster(Context context,Entry e,Consumer<Bitmap> onReady) {
         Context app = context.getApplicationContext();
         if (e.uri == null || e.uri.isEmpty()) return;
         File file = posterFile(app,e);
@@ -310,25 +389,20 @@ public final class MediaCatalog {
         if (THUMB_FAILED.contains(e.uri) || !THUMB_PENDING.add(e.uri)) return;
         POSTER_WORKER.execute(() -> {
             try {
-                Bitmap thumbnail;
-                Uri uri = Uri.parse(e.uri);
-                if (android.os.Build.VERSION.SDK_INT >= 29) {
-                    thumbnail = app.getContentResolver().loadThumbnail(uri, new Size(200,200), null);
-                } else {
-                    thumbnail = MediaStore.Video.Thumbnails.getThumbnail(app.getContentResolver(),
-                        android.content.ContentUris.parseId(uri), MediaStore.Video.Thumbnails.MINI_KIND, null);
-                }
+                Bitmap thumbnail = loadVideoThumbnail(app,Uri.parse(e.uri));
                 if (thumbnail != null) {
                     File out = posterFile(app,e);
                     try (FileOutputStream stream = new FileOutputStream(out)) {
-                        thumbnail.compress(Bitmap.CompressFormat.JPEG, 74, stream);
+                        thumbnail.compress(Bitmap.CompressFormat.JPEG,76,stream);
                     }
                     POSTER_CACHE.put(e.uri,thumbnail);
                     if (onReady != null) UI.post(() -> onReady.accept(thumbnail));
+                } else {
+                    THUMB_FAILED.add(e.uri);
                 }
-            } catch (Exception ex) {
+            } catch (Exception err) {
                 THUMB_FAILED.add(e.uri);
-                Log.d(TAG,"No thumbnail for "+e.title+": "+ex.getClass().getSimpleName());
+                Log.d(TAG,"Thumbnail failed: "+err.getClass().getSimpleName());
             } finally {
                 THUMB_PENDING.remove(e.uri);
             }
