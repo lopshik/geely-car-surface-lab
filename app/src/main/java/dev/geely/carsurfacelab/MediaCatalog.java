@@ -13,11 +13,8 @@ import android.os.Looper;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Collections;
-import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -207,45 +204,6 @@ public final class MediaCatalog {
         // Clearing interruption is intentional user selection, not a gear change.
         prefs(c).edit().putBoolean("resume_interrupted", false)
                 .putString("video_uri", e.uri).apply();
-    }
-
-    public static boolean favorite(Context c, Entry e) {
-        return prefs(c).getStringSet("favorites", Collections.emptySet()).contains(e.uri);
-    }
-
-    public static boolean toggleFavorite(Context c, Entry e) {
-        Set<String> values = new HashSet<>(prefs(c).getStringSet("favorites", Collections.emptySet()));
-        boolean nowFavorite;
-        if (values.contains(e.uri)) { values.remove(e.uri); nowFavorite = false; }
-        else { values.add(e.uri); nowFavorite = true; }
-        prefs(c).edit().putStringSet("favorites", values).apply();
-        return nowFavorite;
-    }
-
-    public static List<Entry> filtered(Context c, boolean favoritesOnly, String folder, String query) {
-        String q = query == null ? "" : query.toLowerCase(Locale.ROOT).trim();
-        List<Entry> items = new ArrayList<>();
-        for (Entry e : all(c)) {
-            if (favoritesOnly && !favorite(c,e)) continue;
-            if (folder != null && !folder.equals(e.folder)) continue;
-            if (!q.isEmpty() && !(e.title + " " + e.folder).toLowerCase(Locale.ROOT).contains(q)) continue;
-            items.add(e);
-        }
-        return items;
-    }
-
-    public static List<String> folders(Context c) {
-        Set<String> set = new LinkedHashSet<>();
-        for (Entry e : all(c)) set.add(e.folder);
-        ArrayList<String> list = new ArrayList<>(set);
-        list.sort(String.CASE_INSENSITIVE_ORDER);
-        return list;
-    }
-
-    public static int folderCount(Context c, String folder) {
-        int count = 0;
-        for (Entry e : all(c)) if (folder.equals(e.folder)) count++;
-        return count;
     }
 
     /** Cache-only fast path for Android Auto's binder thread. Never decode video there. */

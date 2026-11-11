@@ -20,10 +20,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
-import android.widget.EditText;
-import android.text.Editable;
-import android.text.TextWatcher;
-import android.text.InputType;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -40,11 +36,9 @@ public final class MainActivity extends Activity {
             TEXT = 0xFFF4F8FF, MUTED = 0xFF9AAEC3, ACCENT = 0xFF55D5FF;
     private TextView playingName, playingStatus, playbackTime, scanStatus, diagnosticText;
     private LinearLayout catalog;
-    private EditText searchBox;
-    private TextView allFilter, favoritesFilter;
-    private boolean favoritesOnly;
     private SeekBar timeline;
-    private int catalogShown = 12;
+    private int catalogShown = 30;
+    private TextView moreButton;
     private boolean diagnosticsVisible;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -116,55 +110,26 @@ public final class MainActivity extends Activity {
         hero.addView(controls);
         root.addView(hero);
 
-        section(root, "Видеотека", "Выбор работает и на телефоне, и на экране Geely");
+        section(root, "Мои видео", "Выбирай фильм здесь или прямо на экране Geely");
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.addView(button("Найти видео", true, v -> scanOrRequest()), weight(1));
-        buttons.addView(button("+ MP4", false, v -> pickFile()), weight(1));
+        buttons.addView(button("Видео телефона", true, v -> scanOrRequest()), weight(1));
+        buttons.addView(button("+ Файл", false, v -> pickFile()), weight(1));
         root.addView(buttons);
 
         scanStatus = txt("Выбери файл или разреши доступ к видеотеке", 12, MUTED, false);
         scanStatus.setPadding(dp(5), dp(13), 0, dp(10));
         root.addView(scanStatus);
 
-        searchBox = new EditText(this);
-        searchBox.setSingleLine(true);
-        searchBox.setTextSize(15);
-        searchBox.setTextColor(TEXT);
-        searchBox.setHintTextColor(MUTED);
-        searchBox.setHint("Поиск по названию или папке");
-        searchBox.setInputType(InputType.TYPE_CLASS_TEXT);
-        searchBox.setPadding(dp(14), dp(11), dp(14), dp(11));
-        searchBox.setBackground(round(PANEL, 15));
-        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(52));
-        searchParams.setMargins(0, dp(5), 0, dp(12));
-        root.addView(searchBox, searchParams);
-        searchBox.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                catalogShown = 12;
-                displayCatalog();
-            }
-            @Override public void afterTextChanged(Editable e) {}
-        });
-
-        LinearLayout filters = new LinearLayout(this);
-        filters.setOrientation(LinearLayout.HORIZONTAL);
-        allFilter = button("Все видео", true, v -> setFavoritesOnly(false));
-        favoritesFilter = button("★ Избранное", false, v -> setFavoritesOnly(true));
-        filters.addView(allFilter, weight(1));
-        filters.addView(favoritesFilter, weight(1));
-        root.addView(filters);
-
         catalog = new LinearLayout(this);
         catalog.setOrientation(LinearLayout.VERTICAL);
         root.addView(catalog);
 
-        TextView more = button("Показать ещё фильмы", false, v -> {
-            catalogShown = Math.min(240, catalogShown + 20);
+        moreButton = button("Показать остальные", false, v -> {
+            catalogShown = Math.min(250, catalogShown + 30);
             displayCatalog();
         });
-        root.addView(more);
+        root.addView(moreButton);
 
         section(root, "Воспроизведение", "Видео на телефоне или на большом экране");
         LinearLayout actions = new LinearLayout(this);
@@ -196,7 +161,7 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "Отчёт скопирован", Toast.LENGTH_SHORT).show();
         }));
 
-        TextView foot = txt("CarVideo PREVIEW 07 · испытания только на стоянке", 11, MUTED, false);
+        TextView foot = txt("CarVideo 0.7.1 · испытания только на стоянке", 11, MUTED, false);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, dp(24), 0, 0);
         root.addView(foot);
@@ -259,23 +224,15 @@ public final class MainActivity extends Activity {
         desc.setPadding(0, 0, 0, dp(10));
         root.addView(desc);
     }
-    private void setFavoritesOnly(boolean enabled) {
-        favoritesOnly = enabled;
-        catalogShown = 12;
-        allFilter.setBackground(round(enabled ? 0xFF203145 : ACCENT, 14));
-        allFilter.setTextColor(enabled ? TEXT : BG);
-        favoritesFilter.setBackground(round(enabled ? ACCENT : 0xFF203145, 14));
-        favoritesFilter.setTextColor(enabled ? BG : TEXT);
-        displayCatalog();
-    }
-
     private void displayCatalog() {
         if (catalog == null) return;
         catalog.removeAllViews();
-        String query = searchBox == null ? "" : searchBox.getText().toString();
-        List<MediaCatalog.Entry> entries = MediaCatalog.filtered(this, favoritesOnly, null, query);
+        List<MediaCatalog.Entry> entries = MediaCatalog.all(this);
+        if (moreButton != null) {
+            moreButton.setVisibility(entries.size() > catalogShown ? View.VISIBLE : View.GONE);
+        }
         if (entries.isEmpty()) {
-            TextView hint = txt("Пока пусто. Нажми «Найти видео» или «+ MP4».", 14, MUTED, false);
+            TextView hint = txt("Видео пока нет. Нажми «Видео телефона» или «+ Файл».", 14, MUTED, false);
             hint.setPadding(dp(10), dp(22), dp(10), dp(22));
             catalog.addView(hint);
             return;
@@ -316,14 +273,6 @@ public final class MainActivity extends Activity {
             sub.setPadding(0, dp(6), 0, 0);
             title.addView(sub);
             item.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
-            TextView favorite = txt(MediaCatalog.favorite(this, entry) ? "★" : "☆",
-                    24, ACCENT, true);
-            favorite.setPadding(dp(10), dp(8), dp(6), dp(8));
-            favorite.setOnClickListener(v -> {
-                MediaCatalog.toggleFavorite(this, entry);
-                displayCatalog();
-            });
-            item.addView(favorite);
             TextView play = txt("▶", 19, ACCENT, true);
             play.setPadding(dp(7), 0, 0, 0);
             item.addView(play);

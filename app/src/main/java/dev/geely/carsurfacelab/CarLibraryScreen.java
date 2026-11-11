@@ -19,84 +19,59 @@ import androidx.core.graphics.drawable.IconCompat;
 
 import java.util.List;
 
-/** Android Auto-compatible paged library; the movie Surface remains owned by VideoSurfaceScreen. */
+/**
+ * Small, direct movie grid on the car screen. No favorites, search or folder
+ * hierarchies. Keeps the v0.6 playback/Surface lifecycle unchanged.
+ */
 public final class CarLibraryScreen extends Screen {
     private int page;
-    private final String folder;
-    private final boolean favoritesOnly;
+    public CarLibraryScreen(@NonNull CarContext context) { super(context); }
 
-    public CarLibraryScreen(@NonNull CarContext context) { this(context, null, false); }
-    public CarLibraryScreen(@NonNull CarContext context, String folder, boolean favoritesOnly) {
-        super(context);
-        this.folder = folder;
-        this.favoritesOnly = favoritesOnly;
+    private CarIcon icon(MediaCatalog.Entry entry) {
+        return new CarIcon.Builder(
+                IconCompat.createWithBitmap(MediaCatalog.poster(getCarContext(), entry))).build();
     }
 
-    private String title() {
-        return favoritesOnly ? "★ Избранное" : folder != null ? folder : "Все видео";
-    }
-
-    private CarIcon icon(String name) {
-        MediaCatalog.Entry sample = new MediaCatalog.Entry("", name, "", 0);
-        return new CarIcon.Builder(IconCompat.createWithBitmap(MediaCatalog.poster(sample))).build();
-    }
-
-    private void tile(ItemList.Builder list, String name, CarIcon icon, Runnable onClick) {
-        GridItem.Builder item = new GridItem.Builder()
-                .setTitle(name).setImage(icon, GridItem.IMAGE_TYPE_LARGE);
-        if (onClick != null) item.setOnClickListener(onClick::run);
-        list.addItem(item.build());
+    private void tile(ItemList.Builder list, String title, CarIcon icon, Runnable callback) {
+        GridItem.Builder b = new GridItem.Builder()
+                .setTitle(title).setImage(icon, GridItem.IMAGE_TYPE_LARGE);
+        if (callback != null) b.setOnClickListener(callback::run);
+        list.addItem(b.build());
     }
 
     @NonNull @Override public Template onGetTemplate() {
-        CarContext context = getCarContext();
-        List<MediaCatalog.Entry> entries =
-                MediaCatalog.filtered(context, favoritesOnly, folder, null);
-        int hostLimit = context.getCarService(ConstraintManager.class)
+        CarContext c = getCarContext();
+        List<MediaCatalog.Entry> movies = MediaCatalog.all(c);
+        int hostLimit = c.getCarService(ConstraintManager.class)
                 .getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_GRID);
         int capacity = Math.max(2, Math.min(8, hostLimit > 0 ? hostLimit : 6));
-        boolean root = !favoritesOnly && folder == null;
-        boolean categories = root && capacity >= 4;
-        // Reserve space for Next button and category entries, including when there are
-        // hundreds of movies. Never exceed the host's declared grid-item limit.
-        int perPage = Math.max(1, capacity - 1 - (categories ? 2 : 0));
-        int pages = Math.max(1, (entries.size() + perPage - 1) / perPage);
-        page = Math.max(0, Math.min(page, pages - 1));
-
+        // Reserve one place for paging, but fill the entire grid when it fits.
+        int perPage = movies.size() <= capacity ? capacity : Math.max(1, capacity - 1);
+        int pages = Math.max(1, (movies.size() + perPage - 1) / perPage);
+        page = Math.min(page, pages - 1);
         ItemList.Builder list = new ItemList.Builder();
-        if (categories && page == 0) {
-            tile(list, "★ Избранное", icon("Избранное"),
-                    () -> getScreenManager().push(
-                            new CarLibraryScreen(getCarContext(), null, true)));
-            tile(list, "📁 Папки", icon("Папки"),
-                    () -> getScreenManager().push(new CarFoldersScreen(getCarContext())));
-        }
         int start = page * perPage;
-        int end = Math.min(entries.size(), start + perPage);
+        int end = Math.min(movies.size(), start + perPage);
         for (int i = start; i < end; i++) {
-            MediaCatalog.Entry entry = entries.get(i);
-            CarIcon preview = new CarIcon.Builder(
-                    IconCompat.createWithBitmap(MediaCatalog.poster(context, entry))).build();
-            tile(list, entry.title.length() > 42 ? entry.title.substring(0, 41) + "…" : entry.title,
-                    preview, () -> open(entry));
+            MediaCatalog.Entry entry = movies.get(i);
+            String title = entry.title.length() > 42
+                    ? entry.title.substring(0, 41) + "…" : entry.title;
+            tile(list, title, icon(entry), () -> open(entry));
         }
-        if (entries.isEmpty() && (!categories || !root)) {
-            tile(list, favoritesOnly ? "Избранное пока пусто" :
-                    "Добавь фильмы на Xiaomi", icon("Нет фильмов"), null);
+        if (movies.isEmpty()) {
+            MediaCatalog.Entry empty = new MediaCatalog.Entry("", "Добавь видео на Xiaomi", "", 0);
+            tile(list, "Добавь видео на Xiaomi", icon(empty), null);
         }
         if (page + 1 < pages) {
-            tile(list, "Далее ›", icon("Далее"), () -> {
-                page++;
-                invalidate();
-            });
+            MediaCatalog.Entry next = new MediaCatalog.Entry("", "Следующие", "", 0);
+            tile(list, "Далее ›", icon(next), () -> { page++; invalidate(); });
         } else if (page > 0) {
-            tile(list, "‹ Назад", icon("Назад"), () -> {
-                page--;
-                invalidate();
-            });
+            MediaCatalog.Entry prev = new MediaCatalog.Entry("", "Предыдущие", "", 0);
+            tile(list, "‹ Назад", icon(prev), () -> { page--; invalidate(); });
         }
+
         return new GridTemplate.Builder()
-                .setTitle(title() + " " + (page + 1) + "/" + pages)
+                .setTitle(pages == 1 ? "Мои видео" : "Мои видео " + (page + 1) + "/" + pages)
                 .setHeaderAction(Action.BACK)
                 .setSingleList(list.build()).build();
     }
@@ -110,16 +85,14 @@ public final class CarLibraryScreen extends Screen {
                         new Intent(c, PlaybackForegroundService.class));
             } catch (RuntimeException ex) {
                 MediaCatalog.prefs(c).edit().putBoolean("await_audio_service", false)
-                        .putString("audio_diagnostics", "Car selection service start: " +
-                                ex.getClass().getSimpleName()).apply();
-                Log.w("CarVideo.Library", "Foreground service start refused", ex);
-                CarToast.makeText(c, "Включи «Звук для ГУ» на телефоне",
+                        .putString("audio_diagnostics",
+                                "Car selection service start: " + ex.getClass().getSimpleName()).apply();
+                Log.w("CarVideo.Library", "Audio foreground service not available", ex);
+                CarToast.makeText(c, "Включи звук для ГУ на Xiaomi",
                         CarToast.LENGTH_LONG).show();
             }
         }
         MediaCatalog.choose(c, entry);
-        // Pop all the library screens that we created, so returning from a folder
-        // goes to the established NavigationTemplate and the video Surface.
         getScreenManager().popToRoot();
     }
 }
