@@ -36,6 +36,19 @@ public final class PlaybackForegroundService extends Service {
     private AudioFocusRequest focusRequest;
     private MediaPlayer player;
     private MediaSession session;
+    private Uri currentUri;
+    private long pendingSeekMs;
+    private boolean startAfterPrepared;
+    private boolean prepared;
+    private final Runnable positionTick = new Runnable() {
+        @Override public void run() {
+            if (player != null && prepared) {
+                try { if (player.isPlaying()) savePosition("periodic"); }
+                catch (RuntimeException ignored) {}
+            }
+            handler.postDelayed(this, 3000);
+        }
+    };
     private int focusResult = Integer.MIN_VALUE;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -66,6 +79,7 @@ public final class PlaybackForegroundService extends Service {
         updateSession(false);
         instance = this;
         report("Foreground audio service started");
+        handler.postDelayed(positionTick, 3000);
         // If the user chose a file while Android Auto Surface was already open,
         // tell its session when this service is actually ready.
         prefs().edit()
@@ -133,7 +147,21 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void play(Uri uri, Surface surface) {
+        play(uri, surface, true);
+    }
+
+    /**
+     * A reverse camera or other OEM overlay owns the display while it is visible.
+     * Never fight that overlay. Restore the prior timestamp, but after a display
+     * interruption leave video paused until the user explicitly presses Play.
+     */
+    public void play(Uri uri, Surface surface, boolean autoPlay) {
         stopPlayback();
+        currentUri = uri;
+        prepared = false;
+        startAfterPrepared = autoPlay;
+        pendingSeekMs = prefs().getLong(positionKey(uri), 0L);
+        report("Restoring movie position: " + pendingSeekMs + "ms; autoPlay=" + autoPlay);
         String stage = "initial";
         if (surface == null || !surface.isValid()) {
             report("Video Surface invalid");
@@ -180,16 +208,19 @@ public final class PlaybackForegroundService extends Service {
                 }
                 try {
                     p.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT);
-                    p.start();
-                    updateSession(true);
-                    report("Playing; audio tracks=" + audioTracks +
-                            "; audio session=" + p.getAudioSessionId() + route(p));
+                    prepared = true;
                     final int count = audioTracks;
-                    handler.postDelayed(() -> {
-                        if (player == p) report("Playing after 2s; audio tracks=" + count + route(p));
-                    }, 2000);
+                    p.setOnSeekCompleteListener(ready -> finishPreparing(ready, count));
+                    long duration = p.getDuration();
+                    if (pendingSeekMs > 0 && (duration <= 0 || pendingSeekMs < duration - 3000)) {
+                        long at = pendingSeekMs;
+                        report("Prepared; seek to saved position " + at + "ms");
+                        p.seekTo(at, MediaPlayer.SEEK_CLOSEST_SYNC);
+                    } else {
+                        finishPreparing(p, count);
+                    }
                 } catch (RuntimeException e) {
-                    report("Player start error: " + e.getClass().getSimpleName());
+                    report("Player prepare/seek error: " + e.getClass().getSimpleName());
                 }
             });
             mp.setOnErrorListener((p, what, extra) -> {
@@ -205,6 +236,86 @@ public final class PlaybackForegroundService extends Service {
             Log.e(TAG, "Video setup failed at " + stage, e);
             stopPlayback();
         }
+    }
+
+    private void finishPreparing(MediaPlayer p, int audioTracks) {
+        if (player != p) return;
+        try {
+            if (startAfterPrepared) {
+                p.start();
+                updateSession(true);
+                report("Playing; audio tracks=" + audioTracks +
+                        "; restored position=" + p.getCurrentPosition() +
+                        "; audio session=" + p.getAudioSessionId() + route(p));
+            } else {
+                updateSession(false);
+                report("Restored PAUSED at " + p.getCurrentPosition() +
+                        "ms (press Play to continue); audio tracks=" + audioTracks);
+            }
+            handler.postDelayed(() -> {
+                if (player == p) report("Playback state after 2s: " +
+                        (p.isPlaying() ? "playing" : "paused") + route(p));
+            }, 2000);
+        } catch (RuntimeException ex) {
+            report("Start after seek failed: " + ex.getClass().getSimpleName());
+        }
+    }
+
+    private static String positionKey(Uri uri) {
+        // Stable across reconnects/restarts and resistant to path collisions.
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(uri.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder b = new StringBuilder("pos_");
+            for (int i = 0; i < 16; i++) b.append(String.format(java.util.Locale.US, "%02x", hash[i] & 0xFF));
+            return b.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return "pos_" + Integer.toHexString(uri.toString().hashCode());
+        }
+    }
+
+    private void savePosition(String reason) {
+        if (player == null || !prepared || currentUri == null) return;
+        try {
+            long position = Math.max(0, player.getCurrentPosition());
+            long duration = player.getDuration();
+            if (duration > 0 && duration - position < 2500) position = 0;
+            prefs().edit().putLong(positionKey(currentUri), position)
+                    .putLong("last_position_ms", position)
+                    .putString("last_position_reason", reason).apply();
+        } catch (RuntimeException e) {
+            report("Position snapshot failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    public void suspendForCarUi(String reason) {
+        savePosition(reason);
+        prefs().edit().putBoolean("resume_interrupted", true).apply();
+        stopPlayback();
+        report("Car display interrupted: " + reason + "; saved position; camera priority");
+    }
+
+    public long position() {
+        if (player == null || !prepared) return prefs().getLong("last_position_ms", 0);
+        try { return player.getCurrentPosition(); }
+        catch (RuntimeException e) { return 0; }
+    }
+    public long duration() {
+        if (player == null || !prepared) return 0;
+        try { return player.getDuration(); }
+        catch (RuntimeException e) { return 0; }
+    }
+    public boolean playing() {
+        if (player == null || !prepared) return false;
+        try { return player.isPlaying(); }
+        catch (RuntimeException e) { return false; }
+    }
+    public void seekTo(long ms) {
+        if (player == null || !prepared) return;
+        try {
+            player.seekTo(Math.max(0, Math.min(ms, duration())));
+            savePosition("user-seek");
+        } catch (RuntimeException e) { report("Seek error: " + e.getClass().getSimpleName()); }
     }
 
     private static String route(MediaPlayer p) {
@@ -226,28 +337,33 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void pause() {
-        if (player == null) return;
+        if (player == null || !prepared) return;
         try {
             if (player.isPlaying()) player.pause();
+            savePosition("user-pause");
             updateSession(false);
-            report("Paused");
+            report("Paused at " + position());
         } catch (RuntimeException e) { report("Pause failed: " + e.getClass().getSimpleName()); }
     }
 
     public void resume() {
-        if (player == null) return;
+        if (player == null || !prepared) return;
         try {
             player.start();
+            prefs().edit().putBoolean("resume_interrupted", false).apply();
             updateSession(true);
-            report("Resumed");
+            report("Resumed at " + position());
         } catch (RuntimeException e) { report("Resume failed: " + e.getClass().getSimpleName()); }
     }
 
     public void stopPlayback() {
+        savePosition("player-release");
+        prepared = false;
         if (player != null) {
             try { player.release(); } catch (RuntimeException ignored) {}
             player = null;
         }
+        currentUri = null;
         if (focusRequest != null) {
             audioManager.abandonAudioFocusRequest(focusRequest);
             focusRequest = null;
@@ -257,6 +373,7 @@ public final class PlaybackForegroundService extends Service {
 
     @Override
     public void onDestroy() {
+        handler.removeCallbacks(positionTick);
         report("Foreground service destroyed");
         stopPlayback();
         instance = null;
