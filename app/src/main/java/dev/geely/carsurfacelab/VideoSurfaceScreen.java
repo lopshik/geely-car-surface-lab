@@ -261,7 +261,14 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     }
 
     @Override public void onStableAreaChanged(@NonNull Rect r) {
-        stable.set(r); record("Stable area changed");
+        stable.set(r);
+        prefs().edit().putInt("video_safe_left",r.left)
+                .putInt("video_safe_top",r.top)
+                .putInt("video_safe_right",r.right)
+                .putInt("video_safe_bottom",r.bottom).apply();
+        PlaybackForegroundService s = PlaybackForegroundService.active();
+        if (s != null) s.updateVisibleVideoArea(r.left,r.top,r.right,r.bottom);
+        record("Stable area changed");
     }
 
     @Override public void onClick(float x, float y) {

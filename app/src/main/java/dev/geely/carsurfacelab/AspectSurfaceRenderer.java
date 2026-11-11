@@ -61,6 +61,7 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
     private EGLSurface window = EGL14.EGL_NO_SURFACE;
     private int program, tex, posLoc, uvLoc, matrixLoc, samplerLoc;
     private int videoWidth, videoHeight;
+    private volatile int safeLeft, safeTop, safeRight, safeBottom;
     private final float[] textureMatrix = new float[16];
     private final FloatBuffer quad = ByteBuffer.allocateDirect(16*4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer();
@@ -70,6 +71,8 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
         this.host = host;
         this.outputWidth = Math.max(1, width);
         this.outputHeight = Math.max(1, height);
+        this.safeRight = this.outputWidth;
+        this.safeBottom = this.outputHeight;
         this.listener = listener;
     }
 
@@ -102,6 +105,13 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
                 inputTexture.setDefaultBufferSize(videoWidth,videoHeight);
             }
         });
+    }
+
+    public void setSafeArea(int left, int top, int right, int bottom) {
+        if (left < 0 || top < 0 || right <= left || bottom <= top ||
+                right > outputWidth || bottom > outputHeight) return;
+        safeLeft = left; safeTop = top;
+        safeRight = right; safeBottom = bottom;
     }
 
     private static void require(boolean ok, String stage) {
@@ -195,17 +205,22 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
     }
 
     private void render() {
+        // Fit INSIDE the unobstructed Android Auto host rectangle.
+        // The full Surface is larger than the stable/visible region on Geely.
+        int l=safeLeft,t=safeTop,r=safeRight,b=safeBottom;
+        float usableW = Math.max(1,r-l), usableH = Math.max(1,b-t);
         float sourceRatio = videoWidth > 0 && videoHeight > 0
-                ? (float) videoWidth / videoHeight
-                : (float) outputWidth / outputHeight;
-        float targetRatio = (float) outputWidth / outputHeight;
-        float sx = 1f, sy = 1f;
-        if (sourceRatio > targetRatio) sy = targetRatio/sourceRatio;
-        else sx = sourceRatio/targetRatio;
-        quad.put(0,-sx); quad.put(1,-sy); quad.put(2,0f); quad.put(3,0f);
-        quad.put(4, sx); quad.put(5,-sy); quad.put(6,1f); quad.put(7,0f);
-        quad.put(8,-sx); quad.put(9, sy); quad.put(10,0f); quad.put(11,1f);
-        quad.put(12,sx); quad.put(13,sy); quad.put(14,1f); quad.put(15,1f);
+                ? (float) videoWidth / videoHeight : usableW / usableH;
+        float targetRatio = usableW / usableH;
+        float centerX = (l+r)/(float)outputWidth - 1f;
+        float centerY = 1f - (t+b)/(float)outputHeight;
+        float sx = usableW/outputWidth, sy = usableH/outputHeight;
+        if (sourceRatio > targetRatio) sy *= targetRatio/sourceRatio;
+        else sx *= sourceRatio/targetRatio;
+        quad.put(0,centerX-sx); quad.put(1,centerY-sy); quad.put(2,0f); quad.put(3,0f);
+        quad.put(4,centerX+sx); quad.put(5,centerY-sy); quad.put(6,1f); quad.put(7,0f);
+        quad.put(8,centerX-sx); quad.put(9,centerY+sy); quad.put(10,0f); quad.put(11,1f);
+        quad.put(12,centerX+sx); quad.put(13,centerY+sy); quad.put(14,1f); quad.put(15,1f);
         GLES20.glViewport(0,0,outputWidth,outputHeight);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         GLES20.glUseProgram(program);

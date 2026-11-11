@@ -197,6 +197,10 @@ public final class PlaybackForegroundService extends Service {
         }
     }
 
+    public void updateVisibleVideoArea(int left,int top,int right,int bottom) {
+        if (aspectRenderer != null) aspectRenderer.setSafeArea(left,top,right,bottom);
+    }
+
     public void changePicture(String mode) {
         if (!"fit".equals(mode) && !"fill".equals(mode)) return;
         prefs().edit().putString("picture_mode", mode).apply();
@@ -257,6 +261,11 @@ public final class PlaybackForegroundService extends Service {
                 }
             });
             aspectRenderer = renderer;
+            renderer.setSafeArea(
+                    prefs().getInt("video_safe_left",0),
+                    prefs().getInt("video_safe_top",0),
+                    prefs().getInt("video_safe_right",prefs().getInt("surface_width",1802)),
+                    prefs().getInt("video_safe_bottom",prefs().getInt("surface_height",1052)));
             renderer.start();
         } else {
             initializePlayer(uri, surface, attributes, false);
