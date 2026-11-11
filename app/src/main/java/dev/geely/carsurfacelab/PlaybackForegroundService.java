@@ -13,6 +13,7 @@ import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.media.PlaybackParams;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.net.Uri;
@@ -40,6 +41,9 @@ public final class PlaybackForegroundService extends Service {
     private long pendingSeekMs;
     private boolean startAfterPrepared;
     private boolean prepared;
+    private Surface hostSurface;
+    private AspectSurfaceRenderer aspectRenderer;
+    private int playGeneration;
     private final Runnable positionTick = new Runnable() {
         @Override public void run() {
             if (player != null && prepared) {
@@ -94,8 +98,8 @@ public final class PlaybackForegroundService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ?
                 new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return b.setContentTitle("Car Surface Lab — звук")
-                .setContentText("Аудиосервис готов к подключению Android Auto")
+        return b.setContentTitle("CarVideo")
+                .setContentText("Воспроизведение на экране автомобиля")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentIntent(content)
                 .setOngoing(true).build();
@@ -141,7 +145,8 @@ public final class PlaybackForegroundService extends Service {
                 .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE |
                             PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_STOP)
                 .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                        PlaybackState.PLAYBACK_POSITION_UNKNOWN, playing ? 1f : 0f)
+                        PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                        playing ? configuredRate() : 0f)
                 .build();
         session.setPlaybackState(st);
     }
@@ -155,14 +160,63 @@ public final class PlaybackForegroundService extends Service {
      * Never fight that overlay. Restore the prior timestamp, but after a display
      * interruption leave video paused until the user explicitly presses Play.
      */
+    public float configuredRate() {
+        return prefs().getFloat("playback_rate", 1.0f);
+    }
+
+    public String configuredPicture() {
+        return prefs().getString("picture_mode", "fill");
+    }
+
+    public void changeRate(float speed) {
+        if (!(speed == 0.75f || speed == 1f || speed == 1.25f ||
+                speed == 1.5f || speed == 2f)) speed = 1f;
+        prefs().edit().putFloat("playback_rate", speed).apply();
+        if (player != null && prepared) {
+            // setPlaybackParams(nonzero) STARTS the player on Android.
+            // Never invoke it while paused (including after the rear camera).
+            try {
+                if (player.isPlaying()) applyRate(player);
+            } catch (RuntimeException e) {
+                report("Speed change failed: " + e.getClass().getSimpleName());
+            }
+        }
+        report("Preferred playback speed " + speed + "x");
+    }
+
+    private void applyRate(MediaPlayer p) {
+        float value = configuredRate();
+        try {
+            p.setPlaybackParams(new PlaybackParams().setSpeed(value).setPitch(1f));
+            report("Playback speed applied: " + value + "x");
+        } catch (RuntimeException e) {
+            report("Playback speed not supported: " + value + "x, " +
+                    e.getClass().getSimpleName());
+            prefs().edit().putFloat("playback_rate", 1f).apply();
+        }
+    }
+
+    public void changePicture(String mode) {
+        if (!"fit".equals(mode) && !"fill".equals(mode)) return;
+        prefs().edit().putString("picture_mode", mode).apply();
+        Surface host = hostSurface;
+        Uri uri = currentUri;
+        boolean shouldPlay = playing();
+        if (uri != null && host != null && host.isValid()) {
+            report("Switch aspect mode, save current timestamp: " + mode);
+            play(uri, host, shouldPlay);
+        }
+    }
+
     public void play(Uri uri, Surface surface, boolean autoPlay) {
         stopPlayback();
+        int generation = ++playGeneration;
+        hostSurface = surface;
         currentUri = uri;
         prepared = false;
         startAfterPrepared = autoPlay;
         pendingSeekMs = prefs().getLong(positionKey(uri), 0L);
         report("Restoring movie position: " + pendingSeekMs + "ms; autoPlay=" + autoPlay);
-        String stage = "initial";
         if (surface == null || !surface.isValid()) {
             report("Video Surface invalid");
             return;
@@ -181,8 +235,35 @@ public final class PlaybackForegroundService extends Service {
                 }).build();
         focusResult = audioManager.requestAudioFocus(focusRequest);
         report("Audio focus request = " + focusName(focusResult));
+        boolean fit = "fit".equals(configuredPicture());
+        if (fit) {
+            // Correct letterbox with no aspect distortion on the host's fixed Surface.
+            // Extra compositor is opt-in; direct fill remains the efficient default.
+            AspectSurfaceRenderer renderer = new AspectSurfaceRenderer(surface, 1802, 1052,
+                    new AspectSurfaceRenderer.Listener() {
+                @Override public void onReady(Surface decoder) {
+                    if (generation != playGeneration || currentUri == null) return;
+                    report("Aspect FIT renderer ready");
+                    initializePlayer(uri, decoder, attributes, true);
+                }
+                @Override public void onFailure(String reason) {
+                    if (generation != playGeneration || currentUri == null) return;
+                    report("FIT EGL failure: " + reason + "; trying direct FILL");
+                    if (aspectRenderer != null) { aspectRenderer.close(); aspectRenderer = null; }
+                    if (player == null) initializePlayer(uri, surface, attributes, false);
+                }
+            });
+            aspectRenderer = renderer;
+            renderer.start();
+        } else {
+            initializePlayer(uri, surface, attributes, false);
+        }
+    }
+
+    private void initializePlayer(Uri uri, Surface target, AudioAttributes attributes,
+                                  boolean aspectFit) {
+        String stage = "create";
         try {
-            stage = "create";
             MediaPlayer mp = new MediaPlayer();
             player = mp;
             stage = "audio attributes";
@@ -191,28 +272,37 @@ public final class PlaybackForegroundService extends Service {
             stage = "setDataSource";
             mp.setDataSource(this, uri);
             stage = "setSurface";
-            mp.setSurface(surface);
+            mp.setSurface(target);
             stage = "setLooping";
             mp.setLooping(true);
-            mp.setOnVideoSizeChangedListener((p, w, h) ->
-                    report("Video decoded: " + w + "x" + h));
+            mp.setOnVideoSizeChangedListener((p, w, h) -> {
+                if (aspectFit && aspectRenderer != null) aspectRenderer.videoSize(w, h);
+                report("Video decoded: " + w + "x" + h +
+                        "; image mode=" + (aspectFit ? "FIT" : "FILL"));
+            });
             mp.setOnPreparedListener(p -> {
                 if (player != p) return;
                 int audioTracks = 0;
                 try {
                     for (MediaPlayer.TrackInfo track : p.getTrackInfo()) {
-                        if (track.getTrackType() == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) audioTracks++;
+                        if (track.getTrackType() == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO)
+                            audioTracks++;
                     }
                 } catch (RuntimeException e) {
                     report("Tracks inspection error: " + e.getClass().getSimpleName());
                 }
                 try {
-                    p.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT);
+                    // FIT uses an aspect-matched decoder SurfaceTexture and an EGL
+                    // letterboxed output. Direct FILL preserves aspect via cropping.
+                    p.setVideoScalingMode(aspectFit ?
+                            MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT :
+                            MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
                     prepared = true;
                     final int count = audioTracks;
                     p.setOnSeekCompleteListener(ready -> finishPreparing(ready, count));
                     long duration = p.getDuration();
-                    if (pendingSeekMs > 0 && (duration <= 0 || pendingSeekMs < duration - 3000)) {
+                    if (pendingSeekMs > 0 &&
+                            (duration <= 0 || pendingSeekMs < duration - 3000)) {
                         long at = pendingSeekMs;
                         report("Prepared; seek to saved position " + at + "ms");
                         p.seekTo(at, MediaPlayer.SEEK_CLOSEST_SYNC);
@@ -230,7 +320,7 @@ public final class PlaybackForegroundService extends Service {
             });
             stage = "prepareAsync";
             mp.prepareAsync();
-            report("Foreground player preparing");
+            report("Foreground player preparing; " + (aspectFit ? "FIT" : "FILL"));
         } catch (Exception e) {
             report("Foreground player FAILED at " + stage + ": " + e.getClass().getSimpleName());
             Log.e(TAG, "Video setup failed at " + stage, e);
@@ -243,6 +333,7 @@ public final class PlaybackForegroundService extends Service {
         try {
             if (startAfterPrepared) {
                 p.start();
+                applyRate(p);
                 updateSession(true);
                 report("Playing; audio tracks=" + audioTracks +
                         "; restored position=" + p.getCurrentPosition() +
@@ -350,6 +441,7 @@ public final class PlaybackForegroundService extends Service {
         if (player == null || !prepared) return;
         try {
             player.start();
+            applyRate(player);
             prefs().edit().putBoolean("resume_interrupted", false).apply();
             updateSession(true);
             report("Resumed at " + position());
@@ -357,6 +449,7 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void stopPlayback() {
+        ++playGeneration;
         savePosition("player-release");
         prepared = false;
         if (player != null) {
@@ -364,6 +457,11 @@ public final class PlaybackForegroundService extends Service {
             player = null;
         }
         currentUri = null;
+        hostSurface = null;
+        if (aspectRenderer != null) {
+            aspectRenderer.close();
+            aspectRenderer = null;
+        }
         if (focusRequest != null) {
             audioManager.abandonAudioFocusRequest(focusRequest);
             focusRequest = null;
