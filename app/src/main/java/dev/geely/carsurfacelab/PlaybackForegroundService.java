@@ -186,6 +186,7 @@ public final class PlaybackForegroundService extends Service {
 
     private void applyRate(MediaPlayer p) {
         float value = configuredRate();
+        if (Math.abs(value - 1f) < 0.001f) return; // retain proven default audio path
         try {
             p.setPlaybackParams(new PlaybackParams().setSpeed(value).setPitch(1f));
             report("Playback speed applied: " + value + "x");

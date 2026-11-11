@@ -62,6 +62,8 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
     private int program, tex, posLoc, uvLoc, matrixLoc, samplerLoc;
     private int videoWidth, videoHeight;
     private final float[] textureMatrix = new float[16];
+    private final FloatBuffer quad = ByteBuffer.allocateDirect(16*4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer();
     private boolean stopped, ready;
 
     public AspectSurfaceRenderer(Surface host, int width, int height, Listener listener) {
@@ -87,6 +89,7 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
                 Log.e(TAG, "EGL decoder bridge initialization failed", ex);
                 main.post(() -> listener.onFailure(ex.getClass().getSimpleName()));
                 releaseGl();
+                if (thread != null) thread.quitSafely();
             }
         });
     }
@@ -199,24 +202,19 @@ public final class AspectSurfaceRenderer implements SurfaceTexture.OnFrameAvaila
         float sx = 1f, sy = 1f;
         if (sourceRatio > targetRatio) sy = targetRatio/sourceRatio;
         else sx = sourceRatio/targetRatio;
-        float[] quad = {
-                -sx,-sy, 0,0,
-                 sx,-sy, 1,0,
-                -sx, sy, 0,1,
-                 sx, sy, 1,1
-        };
-        FloatBuffer vertices = ByteBuffer.allocateDirect(quad.length*4)
-                .order(ByteOrder.nativeOrder()).asFloatBuffer();
-        vertices.put(quad).position(0);
+        quad.put(0,-sx); quad.put(1,-sy); quad.put(2,0f); quad.put(3,0f);
+        quad.put(4, sx); quad.put(5,-sy); quad.put(6,1f); quad.put(7,0f);
+        quad.put(8,-sx); quad.put(9, sy); quad.put(10,0f); quad.put(11,1f);
+        quad.put(12,sx); quad.put(13,sy); quad.put(14,1f); quad.put(15,1f);
         GLES20.glViewport(0,0,outputWidth,outputHeight);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         GLES20.glUseProgram(program);
-        vertices.position(0);
+        quad.position(0);
         GLES20.glEnableVertexAttribArray(posLoc);
-        GLES20.glVertexAttribPointer(posLoc,2,GLES20.GL_FLOAT,false,16,vertices);
-        vertices.position(2);
+        GLES20.glVertexAttribPointer(posLoc,2,GLES20.GL_FLOAT,false,16,quad);
+        quad.position(2);
         GLES20.glEnableVertexAttribArray(uvLoc);
-        GLES20.glVertexAttribPointer(uvLoc,2,GLES20.GL_FLOAT,false,16,vertices);
+        GLES20.glVertexAttribPointer(uvLoc,2,GLES20.GL_FLOAT,false,16,quad);
         GLES20.glUniformMatrix4fv(matrixLoc,1,false,textureMatrix,0);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,tex);
