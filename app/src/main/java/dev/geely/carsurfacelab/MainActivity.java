@@ -155,7 +155,7 @@ public final class MainActivity extends Activity {
         controls.addView(btn("▶ / Ⅱ",true,v -> {
             PlaybackForegroundService service=PlaybackForegroundService.active();
             if(service!=null)service.toggle();
-            else Toast.makeText(this,"Выбери фильм на экране Geely",Toast.LENGTH_SHORT).show();
+            else Toast.makeText(this,"Запусти фильм на экране автомобиля",Toast.LENGTH_SHORT).show();
             updatePlaying();
         }),equal(2));
         controls.addView(btn("+10 с",false,v -> jump(10000)),equal(1));

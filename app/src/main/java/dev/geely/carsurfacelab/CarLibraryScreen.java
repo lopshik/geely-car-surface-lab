@@ -88,7 +88,7 @@ public final class CarLibraryScreen extends Screen {
                         .putString("audio_diagnostics",
                                 "Car selection service start: " + ex.getClass().getSimpleName()).apply();
                 Log.w("CarVideo.Library", "Audio foreground service not available", ex);
-                CarToast.makeText(c, "Включи звук для ГУ на Xiaomi",
+                CarToast.makeText(c, "Открой Лог на телефоне: Звук для ГУ",
                         CarToast.LENGTH_LONG).show();
             }
         }

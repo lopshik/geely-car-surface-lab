@@ -98,6 +98,21 @@ public final class DiagnosticsActivity extends Activity {
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0,-1,1);
         sp.setMargins(dp(8),0,0,0);
         actions.addView(share,sp);
+        TextView startService = button("Звук для ГУ",v -> {
+            try {
+                if(android.os.Build.VERSION.SDK_INT >= 26)
+                    startForegroundService(new Intent(this,PlaybackForegroundService.class));
+                else startService(new Intent(this,PlaybackForegroundService.class));
+                Toast.makeText(this,"Аудиосервис запущен",Toast.LENGTH_SHORT).show();
+            } catch(RuntimeException ex) {
+                Toast.makeText(this,"Аудиосервис: " + ex.getClass().getSimpleName(),
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+        LinearLayout.LayoutParams serviceParams =
+                new LinearLayout.LayoutParams(-1,dp(47));
+        serviceParams.setMargins(0,0,0,dp(8));
+        root.addView(startService,serviceParams);
 
         ScrollView scroll = new ScrollView(this);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));

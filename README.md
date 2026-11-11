@@ -36,3 +36,8 @@ Primary Android references:
 - PlaybackParams speed change may start paused player: https://developer.android.com/reference/android/media/MediaPlayer#setPlaybackParams(android.media.PlaybackParams)
 - One-folder SAF access and limitations: https://developer.android.com/training/data-storage/shared/documents-files
 - DocumentsContract folder enumerator: https://developer.android.com/reference/android/provider/DocumentsContract
+
+## 0.8.1 finishing fixes
+- No Xiaomi name on the car waiting screen; generic "Выбери фильм".
+- Audio FGS manual rescue button is tucked inside the separate diagnostic screen ("Лог" → "Звук для ГУ"). This is for Android 16 builds where a car-initiated foreground service start is rejected.
+- Updated preview package ID to `dev.geely.carvideo.preview081`; code reference includes the optional FIT graphical renderer and safe-area behavior. Still requires actual Geely testing.

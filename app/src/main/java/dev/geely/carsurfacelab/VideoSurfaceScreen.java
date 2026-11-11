@@ -125,7 +125,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         // MessageInfo is rendered by the Android Auto host, not by lockCanvas().
         // Prevents mixing a CPU Canvas producer with a MediaPlayer video producer.
         if (!videoMode || errorMessage != null) {
-            String title = errorMessage != null ? "Playback error" : "Выбери видео на Xiaomi";
+            String title = errorMessage != null ? "Playback error" : "Выбери фильм";
             String description = errorMessage != null ? errorMessage
                     : "Открой «Видеотека» или выбери папку на телефоне.";
             b.setNavigationInfo(new MessageInfo.Builder(title).setText(description).build());
