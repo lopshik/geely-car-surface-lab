@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="Car Surface Lab v0.4"
+        android:label="CSL 05"
         android:icon="@android:drawable/ic_media_play"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false">
@@ -28,7 +28,7 @@
         <service android:name=".PlaybackForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
-        <service android:name=".SurfaceCarService" android:exported="true">
+        <service android:name=".SurfaceCarService" android:label="CSL 05" android:exported="true">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
                 <category android:name="androidx.car.app.category.NAVIGATION" />

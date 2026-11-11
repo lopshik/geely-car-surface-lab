@@ -30,7 +30,7 @@ public class MainActivity extends Activity {
         scroll.addView(layout);
 
         TextView title = new TextView(this);
-        title.setText("Car Surface Lab v0.4\nUSB / Surface / no Shizuku");
+        title.setText("CSL 05\nUSB / Surface / no Shizuku");
         title.setTextSize(24);
         layout.addView(title);
 
@@ -51,7 +51,7 @@ public class MainActivity extends Activity {
         layout.addView(choose, new LinearLayout.LayoutParams(-1, -2));
 
         Button clear = new Button(this);
-        clear.setText("Тестовая сетка (без видео)");
+        clear.setText("Экран ожидания (без видео)");
         clear.setOnClickListener(v -> {
             getSharedPreferences("lab", MODE_PRIVATE).edit().remove("video_uri").apply();
             updateStatus();
@@ -114,7 +114,7 @@ public class MainActivity extends Activity {
         layout.addView(copy, new LinearLayout.LayoutParams(-1, -2));
 
         TextView help = new TextView(this);
-        help.setText("Для первого теста открой сетку в Android Auto, затем выбери MP4 на телефоне при подключённом USB. Видеоплеер должен переключиться без переподключения. "
+        help.setText("Для первого теста открой CSL 05 на Geely без выбранного видео. Затем выбери MP4 на телефоне при подключённом USB. Не переподключай провод. "
             + "После подключения вернись на телефон и скопируй диагностику. "
             + "Для проверки звука до подключения нажми «Включить аудиосервис». Fermata и AnyAuto не изменяются. Проверять на стоянке.");
         help.setPadding(0, 20, 0, 0);
@@ -131,7 +131,7 @@ public class MainActivity extends Activity {
 
     private void updateStatus() {
         String uri = getSharedPreferences("lab", MODE_PRIVATE).getString("video_uri", null);
-        status.setText(uri == null ? "Режим: тестовая сетка" :
+        status.setText(uri == null ? "Режим: ожидание файла" :
                 "Режим: видео\n" + Uri.parse(uri).getLastPathSegment());
         String report = getSharedPreferences("lab", MODE_PRIVATE)
                 .getString("diagnostics", "Ещё не подключалось к Android Auto");
@@ -155,7 +155,23 @@ public class MainActivity extends Activity {
         try {
             getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (SecurityException ignored) {}
-        getSharedPreferences("lab", MODE_PRIVATE).edit().putString("video_uri", uri.toString()).apply();
+        // onActivityResult is running in the foreground: a user-initiated place
+        // to start mediaPlayback FGS under Android 15/16 restrictions.
+        android.content.SharedPreferences p = getSharedPreferences("lab", MODE_PRIVATE);
+        boolean requested = false;
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(new Intent(this, PlaybackForegroundService.class));
+            } else {
+                startService(new Intent(this, PlaybackForegroundService.class));
+            }
+            requested = true;
+        } catch (RuntimeException e) {
+            p.edit().putString("audio_diagnostics",
+                "Foreground start failed: " + e.getClass().getSimpleName()).apply();
+        }
+        p.edit().putBoolean("await_audio_service", requested)
+                .putString("video_uri", uri.toString()).apply();
         updateStatus();
     }
 }

@@ -66,6 +66,12 @@ public final class PlaybackForegroundService extends Service {
         updateSession(false);
         instance = this;
         report("Foreground audio service started");
+        // If the user chose a file while Android Auto Surface was already open,
+        // tell its session when this service is actually ready.
+        prefs().edit()
+                .putBoolean("await_audio_service", false)
+                .putLong("audio_service_ready", android.os.SystemClock.elapsedRealtime())
+                .apply();
     }
 
     private Notification createNotification() {
@@ -128,6 +134,7 @@ public final class PlaybackForegroundService extends Service {
 
     public void play(Uri uri, Surface surface) {
         stopPlayback();
+        String stage = "initial";
         if (surface == null || !surface.isValid()) {
             report("Video Surface invalid");
             return;
@@ -147,12 +154,17 @@ public final class PlaybackForegroundService extends Service {
         focusResult = audioManager.requestAudioFocus(focusRequest);
         report("Audio focus request = " + focusName(focusResult));
         try {
+            stage = "create";
             MediaPlayer mp = new MediaPlayer();
             player = mp;
+            stage = "audio attributes";
             mp.setAudioAttributes(attributes);
             mp.setVolume(1f, 1f);
+            stage = "setDataSource";
             mp.setDataSource(this, uri);
+            stage = "setSurface";
             mp.setSurface(surface);
+            stage = "setLooping";
             mp.setLooping(true);
             mp.setOnVideoSizeChangedListener((p, w, h) ->
                     report("Video decoded: " + w + "x" + h));
@@ -185,9 +197,12 @@ public final class PlaybackForegroundService extends Service {
                 updateSession(false);
                 return true;
             });
+            stage = "prepareAsync";
             mp.prepareAsync();
+            report("Foreground player preparing");
         } catch (Exception e) {
-            report("MediaPlayer failed: " + e.getClass().getSimpleName());
+            report("Foreground player FAILED at " + stage + ": " + e.getClass().getSimpleName());
+            Log.e(TAG, "Video setup failed at " + stage, e);
             stopPlayback();
         }
     }
@@ -242,6 +257,7 @@ public final class PlaybackForegroundService extends Service {
 
     @Override
     public void onDestroy() {
+        report("Foreground service destroyed");
         stopPlayback();
         instance = null;
         if (session != null) { session.release(); session = null; }
