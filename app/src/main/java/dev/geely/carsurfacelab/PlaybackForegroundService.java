@@ -239,7 +239,9 @@ public final class PlaybackForegroundService extends Service {
         if (fit) {
             // Correct letterbox with no aspect distortion on the host's fixed Surface.
             // Extra compositor is opt-in; direct fill remains the efficient default.
-            AspectSurfaceRenderer renderer = new AspectSurfaceRenderer(surface, 1802, 1052,
+            AspectSurfaceRenderer renderer = new AspectSurfaceRenderer(surface,
+                    prefs().getInt("surface_width", 1802),
+                    prefs().getInt("surface_height", 1052),
                     new AspectSurfaceRenderer.Listener() {
                 @Override public void onReady(Surface decoder) {
                     if (generation != playGeneration || currentUri == null) return;
