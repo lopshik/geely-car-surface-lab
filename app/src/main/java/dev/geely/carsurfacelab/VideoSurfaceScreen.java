@@ -113,6 +113,12 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                                 .setIcon(new CarIcon.Builder(IconCompat.createWithResource(
                                         getCarContext(), android.R.drawable.ic_media_play)).build())
                                 .setOnClickListener(this::togglePlayback).build())
+                        .addAction(new Action.Builder()
+                                .setIcon(new CarIcon.Builder(IconCompat.createWithResource(
+                                        getCarContext(), android.R.drawable.ic_menu_manage)).build())
+                                .setOnClickListener(() -> getScreenManager().push(
+                                        new PlaybackOptionsScreen(getCarContext())))
+                                .build())
                         .build())
                 .setMapActionStrip(new ActionStrip.Builder().addAction(Action.PAN).build())
                 .setPanModeListener(on -> Log.i(TAG, "Pan: " + on));
@@ -121,7 +127,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         if (!videoMode || errorMessage != null) {
             String title = errorMessage != null ? "Playback error" : "Выбери видео на Xiaomi";
             String description = errorMessage != null ? errorMessage
-                    : "Открой «Видеотека» на экране Geely или выбери файл на Xiaomi.";
+                    : "Открой «Видеотека» или выбери папку на телефоне.";
             b.setNavigationInfo(new MessageInfo.Builder(title).setText(description).build());
         }
         return b.build();
@@ -131,9 +137,10 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         sourceGeneration++;
         releasePlayer();
         surface = s.getSurface();
-        prefs().edit().putBoolean("surface_connected", surface != null && surface.isValid()).apply();
         width = s.getWidth();
         height = s.getHeight();
+        prefs().edit().putBoolean("surface_connected", surface != null && surface.isValid())
+                .putInt("surface_width", width).putInt("surface_height", height).apply();
         stable.setEmpty();
         visible.setEmpty();
         if (surface == null || !surface.isValid()) {
@@ -205,7 +212,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                 if (closed || player != p) return;
                 String stage = "setVideoScalingMode";
                 try {
-                    p.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT);
+                    p.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
                     stage = "start";
                     p.start();
                     record("Fallback playback STARTED");
