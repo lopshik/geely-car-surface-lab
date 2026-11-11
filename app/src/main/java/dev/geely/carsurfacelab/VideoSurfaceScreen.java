@@ -19,6 +19,8 @@ import androidx.car.app.SurfaceCallback;
 import androidx.car.app.SurfaceContainer;
 import androidx.car.app.model.Action;
 import androidx.car.app.model.ActionStrip;
+import androidx.car.app.model.CarIcon;
+import androidx.core.graphics.drawable.IconCompat;
 import androidx.car.app.model.Template;
 import androidx.car.app.navigation.model.MessageInfo;
 import androidx.car.app.navigation.model.NavigationTemplate;
@@ -34,7 +36,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     private final Rect stable = new Rect(), visible = new Rect();
     private Surface surface;
     private MediaPlayer player;
-    private boolean servicePlayback, videoMode, closed;
+    private boolean servicePlayback, videoMode, closed, screenStarted;
     private int width, height, sourceGeneration;
     private String errorMessage;
 
@@ -43,11 +45,11 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
             handler.post(() -> {
                 if (closed) return;
                 record("video_uri changed; Surface " + (surface != null && surface.isValid()));
-                if (surface != null && surface.isValid()) startSelectedSource();
+                if (screenStarted && surface != null && surface.isValid()) startSelectedSource();
             });
         } else if ("audio_service_ready".equals(key)) {
             handler.post(() -> {
-                if (closed || surface == null || !surface.isValid() || servicePlayback) return;
+                if (closed || !screenStarted || surface == null || !surface.isValid() || servicePlayback) return;
                 if (p.getString("video_uri", null) == null) return;
                 if (PlaybackForegroundService.active() != null) {
                     record("Foreground audio service became ready");
@@ -63,6 +65,25 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         prefs().registerOnSharedPreferenceChangeListener(selectionListener);
         record("CarAppService screen opened");
         getLifecycle().addObserver(new DefaultLifecycleObserver() {
+            @Override public void onStart(@NonNull LifecycleOwner owner) {
+                screenStarted = true;
+                handler.post(() -> {
+                    if (!closed && surface != null && surface.isValid()
+                            && prefs().getString("video_uri", null) != null) {
+                        record("Car screen resumed: restore selected movie");
+                        startSelectedSource();
+                    }
+                });
+            }
+            @Override public void onStop(@NonNull LifecycleOwner owner) {
+                screenStarted = false;
+                PlaybackForegroundService service = PlaybackForegroundService.active();
+                if (servicePlayback && service != null) {
+                    service.suspendForCarUi("Car screen stopped / OEM camera or library");
+                }
+                releasePlayer();
+                record("Screen stopped; playback position saved");
+            }
             @Override public void onDestroy(@NonNull LifecycleOwner owner) {
                 closed = true;
                 sourceGeneration++;
@@ -70,6 +91,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                 handler.removeCallbacksAndMessages(null);
                 releasePlayer();
                 surface = null;
+                prefs().edit().putBoolean("surface_connected", false).apply();
                 c.getCarService(AppManager.class).setSurfaceCallback(null);
                 record("Screen destroyed");
             }
@@ -83,7 +105,13 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     @NonNull @Override public Template onGetTemplate() {
         NavigationTemplate.Builder b = new NavigationTemplate.Builder()
                 .setActionStrip(new ActionStrip.Builder()
-                        .addAction(new Action.Builder().setTitle("Play/Pause")
+                        .addAction(new Action.Builder().setTitle("Видеотека")
+                                .setOnClickListener(() -> getScreenManager().push(
+                                        new CarLibraryScreen(getCarContext())))
+                                .build())
+                        .addAction(new Action.Builder()
+                                .setIcon(new CarIcon.Builder(IconCompat.createWithResource(
+                                        getCarContext(), android.R.drawable.ic_media_play)).build())
                                 .setOnClickListener(this::togglePlayback).build())
                         .build())
                 .setMapActionStrip(new ActionStrip.Builder().addAction(Action.PAN).build())
@@ -93,7 +121,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         if (!videoMode || errorMessage != null) {
             String title = errorMessage != null ? "Playback error" : "Выбери видео на Xiaomi";
             String description = errorMessage != null ? errorMessage
-                    : "Открой CSL 05 на телефоне, выбери MP4. USB не отключать.";
+                    : "Открой «Видеотека» на экране Geely или выбери файл на Xiaomi.";
             b.setNavigationInfo(new MessageInfo.Builder(title).setText(description).build());
         }
         return b.build();
@@ -103,6 +131,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         sourceGeneration++;
         releasePlayer();
         surface = s.getSurface();
+        prefs().edit().putBoolean("surface_connected", surface != null && surface.isValid()).apply();
         width = s.getWidth();
         height = s.getHeight();
         stable.setEmpty();
@@ -134,8 +163,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         PlaybackForegroundService service = PlaybackForegroundService.active();
         if (service != null) {
             servicePlayback = true;
-            record("Start video through foreground audio service");
-            service.play(Uri.parse(chosen), surface);
+            boolean interrupted = prefs().getBoolean("resume_interrupted", false);
+            record("Start video through foreground service; resumePaused=" + interrupted);
+            service.play(Uri.parse(chosen), surface, !interrupted);
             return;
         }
         // File picker is visible on the phone while it starts the audio FGS.
@@ -247,9 +277,14 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
 
     @Override public void onSurfaceDestroyed(@NonNull SurfaceContainer s) {
         sourceGeneration++;
+        PlaybackForegroundService svc = PlaybackForegroundService.active();
+        if (servicePlayback && svc != null) {
+            svc.suspendForCarUi("Surface destroyed / OEM rear camera");
+        }
         releasePlayer();
         surface = null;
-        record("Surface destroyed");
+        prefs().edit().putBoolean("surface_connected", false).apply();
+        record("Surface destroyed; playback position retained");
     }
 
     private void releasePlayer() {
