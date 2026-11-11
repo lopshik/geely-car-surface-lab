@@ -138,8 +138,8 @@ public class MainActivity extends Activity {
         String audio = getSharedPreferences("lab", MODE_PRIVATE)
                 .getString("audio_diagnostics", "Аудиосервис ещё не запускался");
         diagnostic.setText("Package: " + getPackageName()
-                + "\\nAudio service running: " + (PlaybackForegroundService.active() != null)
-                + "\\n" + audio + "\\n---- Screen ----\\n" + report);
+                + "\nAudio service running: " + (PlaybackForegroundService.active() != null)
+                + "\n" + audio + "\n---- Screen ----\n" + report);
     }
 
     @Override
