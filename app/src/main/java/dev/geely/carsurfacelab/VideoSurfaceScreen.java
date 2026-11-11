@@ -30,6 +30,7 @@ import java.util.Date;
 public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
     private static final String TAG = "CarSurfaceLab";
     private MediaPlayer player;
+    private boolean servicePlayback;
     private Surface surface;
     private int width, height;
     private final Rect stable = new Rect(), visible = new Rect();
@@ -83,7 +84,19 @@ public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
         String video = prefs().getString("video_uri", null);
         videoMode = video != null;
         if (!videoMode) drawTestPattern();
-        else playVideo(Uri.parse(video));
+        else {
+            PlaybackForegroundService service = PlaybackForegroundService.active();
+            if (service != null) {
+                servicePlayback = true;
+                saveStatus("Foreground service: using audio focus player");
+                service.play(Uri.parse(video), surface);
+            } else {
+                servicePlayback = false;
+                prefs().edit().putString("audio_diagnostics",
+                        "Foreground service OFF; video plays with v0.2 fallback (sound not guaranteed)").apply();
+                playVideo(Uri.parse(video));
+            }
+        }
     }
 
     private SharedPreferences prefs() {
@@ -225,6 +238,10 @@ public class VideoSurfaceScreen extends Screen implements SurfaceCallback {
     }
 
     private void releasePlayer() {
+        if (servicePlayback && PlaybackForegroundService.active() != null) {
+            PlaybackForegroundService.active().stopPlayback();
+        }
+        servicePlayback = false;
         if (player != null) {
             try { player.release(); } catch (RuntimeException ignored) {}
             player = null;

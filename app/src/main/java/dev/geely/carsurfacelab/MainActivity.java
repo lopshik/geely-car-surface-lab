@@ -30,7 +30,7 @@ public class MainActivity extends Activity {
         scroll.addView(layout);
 
         TextView title = new TextView(this);
-        title.setText("Car Surface Lab v0.2\nUSB / Surface / no Shizuku");
+        title.setText("Car Surface Lab v0.3\nUSB / Surface / no Shizuku");
         title.setTextSize(24);
         layout.addView(title);
 
@@ -58,6 +58,44 @@ public class MainActivity extends Activity {
         });
         layout.addView(clear, new LinearLayout.LayoutParams(-1, -2));
 
+        TextView audioHeading = new TextView(this);
+        audioHeading.setText("Аудиосервис Android Auto (запусти перед поездкой)");
+        audioHeading.setTextSize(18);
+        audioHeading.setPadding(0, 28, 0, 8);
+        layout.addView(audioHeading);
+
+        Button startAudio = new Button(this);
+        startAudio.setText("Включить аудиосервис");
+        startAudio.setOnClickListener(v -> {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 88);
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(new Intent(this, PlaybackForegroundService.class));
+                } else {
+                    startService(new Intent(this, PlaybackForegroundService.class));
+                }
+                status.postDelayed(this::updateStatus, 400);
+            } catch (RuntimeException ex) {
+                getSharedPreferences("lab", MODE_PRIVATE).edit()
+                    .putString("audio_diagnostics", "Аудиосервис не запустился: " +
+                        ex.getClass().getSimpleName()).apply();
+                updateStatus();
+            }
+        });
+        layout.addView(startAudio, new LinearLayout.LayoutParams(-1, -2));
+
+        Button stopAudio = new Button(this);
+        stopAudio.setText("Выключить аудиосервис");
+        stopAudio.setOnClickListener(v -> {
+            stopService(new Intent(this, PlaybackForegroundService.class));
+            status.postDelayed(this::updateStatus, 350);
+        });
+        layout.addView(stopAudio, new LinearLayout.LayoutParams(-1, -2));
+
         TextView heading = new TextView(this);
         heading.setText("Диагностика последнего подключения к Android Auto");
         heading.setTextSize(18);
@@ -78,7 +116,7 @@ public class MainActivity extends Activity {
         TextView help = new TextView(this);
         help.setText("Для первого теста оставь режим сетки, затем открой приложение в Android Auto. "
             + "После подключения вернись на телефон и скопируй диагностику. "
-            + "Fermata и AnyAuto не изменяются. Проверять на стоянке.");
+            + "Для проверки звука до подключения нажми «Включить аудиосервис». Fermata и AnyAuto не изменяются. Проверять на стоянке.");
         help.setPadding(0, 20, 0, 0);
         layout.addView(help);
         setContentView(scroll);
@@ -97,7 +135,11 @@ public class MainActivity extends Activity {
                 "Режим: видео\n" + Uri.parse(uri).getLastPathSegment());
         String report = getSharedPreferences("lab", MODE_PRIVATE)
                 .getString("diagnostics", "Ещё не подключалось к Android Auto");
-        diagnostic.setText("Package: " + getPackageName() + "\n" + report);
+        String audio = getSharedPreferences("lab", MODE_PRIVATE)
+                .getString("audio_diagnostics", "Аудиосервис ещё не запускался");
+        diagnostic.setText("Package: " + getPackageName()
+                + "\\nAudio service running: " + (PlaybackForegroundService.active() != null)
+                + "\\n" + audio + "\\n---- Screen ----\\n" + report);
     }
 
     @Override

@@ -2,9 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
     <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="Car Surface Lab v0.2"
+        android:label="Car Surface Lab v0.3"
         android:icon="@android:drawable/ic_media_play"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false">
@@ -22,6 +25,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".PlaybackForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
         <service android:name=".SurfaceCarService" android:exported="true">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
