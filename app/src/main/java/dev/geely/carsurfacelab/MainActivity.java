@@ -20,6 +20,10 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
+import android.widget.EditText;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.text.InputType;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -36,6 +40,9 @@ public final class MainActivity extends Activity {
             TEXT = 0xFFF4F8FF, MUTED = 0xFF9AAEC3, ACCENT = 0xFF55D5FF;
     private TextView playingName, playingStatus, playbackTime, scanStatus, diagnosticText;
     private LinearLayout catalog;
+    private EditText searchBox;
+    private TextView allFilter, favoritesFilter;
+    private boolean favoritesOnly;
     private SeekBar timeline;
     private int catalogShown = 12;
     private boolean diagnosticsVisible;
@@ -120,6 +127,35 @@ public final class MainActivity extends Activity {
         scanStatus.setPadding(dp(5), dp(13), 0, dp(10));
         root.addView(scanStatus);
 
+        searchBox = new EditText(this);
+        searchBox.setSingleLine(true);
+        searchBox.setTextSize(15);
+        searchBox.setTextColor(TEXT);
+        searchBox.setHintTextColor(MUTED);
+        searchBox.setHint("Поиск по названию или папке");
+        searchBox.setInputType(InputType.TYPE_CLASS_TEXT);
+        searchBox.setPadding(dp(14), dp(11), dp(14), dp(11));
+        searchBox.setBackground(round(PANEL, 15));
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(52));
+        searchParams.setMargins(0, dp(5), 0, dp(12));
+        root.addView(searchBox, searchParams);
+        searchBox.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                catalogShown = 12;
+                displayCatalog();
+            }
+            @Override public void afterTextChanged(Editable e) {}
+        });
+
+        LinearLayout filters = new LinearLayout(this);
+        filters.setOrientation(LinearLayout.HORIZONTAL);
+        allFilter = button("Все видео", true, v -> setFavoritesOnly(false));
+        favoritesFilter = button("★ Избранное", false, v -> setFavoritesOnly(true));
+        filters.addView(allFilter, weight(1));
+        filters.addView(favoritesFilter, weight(1));
+        root.addView(filters);
+
         catalog = new LinearLayout(this);
         catalog.setOrientation(LinearLayout.VERTICAL);
         root.addView(catalog);
@@ -160,7 +196,7 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "Отчёт скопирован", Toast.LENGTH_SHORT).show();
         }));
 
-        TextView foot = txt("CarVideo PREVIEW 06 · испытания только на стоянке", 11, MUTED, false);
+        TextView foot = txt("CarVideo PREVIEW 07 · испытания только на стоянке", 11, MUTED, false);
         foot.setGravity(Gravity.CENTER);
         foot.setPadding(0, dp(24), 0, 0);
         root.addView(foot);
@@ -223,10 +259,21 @@ public final class MainActivity extends Activity {
         desc.setPadding(0, 0, 0, dp(10));
         root.addView(desc);
     }
+    private void setFavoritesOnly(boolean enabled) {
+        favoritesOnly = enabled;
+        catalogShown = 12;
+        allFilter.setBackground(round(enabled ? 0xFF203145 : ACCENT, 14));
+        allFilter.setTextColor(enabled ? TEXT : BG);
+        favoritesFilter.setBackground(round(enabled ? ACCENT : 0xFF203145, 14));
+        favoritesFilter.setTextColor(enabled ? BG : TEXT);
+        displayCatalog();
+    }
+
     private void displayCatalog() {
         if (catalog == null) return;
         catalog.removeAllViews();
-        List<MediaCatalog.Entry> entries = MediaCatalog.all(this);
+        String query = searchBox == null ? "" : searchBox.getText().toString();
+        List<MediaCatalog.Entry> entries = MediaCatalog.filtered(this, favoritesOnly, null, query);
         if (entries.isEmpty()) {
             TextView hint = txt("Пока пусто. Нажми «Найти видео» или «+ MP4».", 14, MUTED, false);
             hint.setPadding(dp(10), dp(22), dp(10), dp(22));
@@ -246,7 +293,11 @@ public final class MainActivity extends Activity {
             catalog.addView(item, rowParams);
 
             ImageView cover = new ImageView(this);
-            cover.setImageBitmap(MediaCatalog.poster(entry));
+            cover.setImageBitmap(MediaCatalog.poster(this, entry));
+            cover.setTag(entry.uri);
+            MediaCatalog.preparePoster(this, entry, thumb -> {
+                if (entry.uri.equals(cover.getTag())) cover.setImageBitmap(thumb);
+            });
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
             LinearLayout.LayoutParams icon = new LinearLayout.LayoutParams(dp(57), dp(57));
             icon.setMargins(0, 0, dp(13), 0);
@@ -265,8 +316,16 @@ public final class MainActivity extends Activity {
             sub.setPadding(0, dp(6), 0, 0);
             title.addView(sub);
             item.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView favorite = txt(MediaCatalog.favorite(this, entry) ? "★" : "☆",
+                    24, ACCENT, true);
+            favorite.setPadding(dp(10), dp(8), dp(6), dp(8));
+            favorite.setOnClickListener(v -> {
+                MediaCatalog.toggleFavorite(this, entry);
+                displayCatalog();
+            });
+            item.addView(favorite);
             TextView play = txt("▶", 19, ACCENT, true);
-            play.setPadding(dp(9), 0, 0, 0);
+            play.setPadding(dp(7), 0, 0, 0);
             item.addView(play);
             item.setOnClickListener(v -> selectMovie(entry));
         }
