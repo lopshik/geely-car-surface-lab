@@ -313,7 +313,7 @@ public final class PlaybackForegroundService extends Service {
     public void seekTo(long ms) {
         if (player == null || !prepared) return;
         try {
-            player.seekTo(Math.max(0, Math.min(ms, duration())));
+            player.seekTo(Math.max(0L, Math.min(ms, duration())), MediaPlayer.SEEK_CLOSEST);
             savePosition("user-seek");
         } catch (RuntimeException e) { report("Seek error: " + e.getClass().getSimpleName()); }
     }
