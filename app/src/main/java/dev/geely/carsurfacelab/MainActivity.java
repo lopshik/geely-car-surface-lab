@@ -1,9 +1,9 @@
 package dev.geely.carsurfacelab;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -11,8 +11,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -23,180 +25,231 @@ import android.widget.Toast;
 import java.util.List;
 import java.util.Locale;
 
-/** CarVideo: one folder, a small movie list, and a compact playback remote. */
+/**
+ * CarVideo 0.8.2: compact phone remote and local film library.
+ * Android Auto video Surface and foreground playback engine are unchanged.
+ */
 public final class MainActivity extends Activity {
     private static final int CHOOSE_FOLDER = 101;
-    private static final int BG = 0xFF09121D, PANEL = 0xFF142235,
-            TEXT = 0xFFF4F8FF, MUTED = 0xFF9AAEC3, ACCENT = 0xFF55D5FF;
+    private static final int BG=0xFF09131F, PANEL=0xFF152637,
+            TEXT=0xFFF4F8FD, MUTED=0xFF9DB1C2, ACCENT=0xFF57D0F2;
 
-    private TextView nowTitle, nowTime, nowStatus, folderName, libraryStatus;
-    private TextView rateButton, pictureButton, moreButton;
-    private LinearLayout catalog;
+    private TextView nowTitle, nowTime, nowStatus, folderName, countView, rateButton,
+            pictureButton, moreButton, optionsButton;
+    private LinearLayout catalog, playbackControls, optionsRow, root;
     private SeekBar timeline;
-    private int shown = 30;
-    private boolean dragging;
+    private int shown = 40;
+    private boolean dragging, optionsExpanded;
+    private boolean lastSelected;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             updatePlaying();
-            ui.postDelayed(this, 1200);
+            ui.postDelayed(this,1300);
         }
     };
 
-    private int dp(int d) { return Math.round(d*getResources().getDisplayMetrics().density); }
+    private int dp(int x) {
+        return Math.round(x*getResources().getDisplayMetrics().density);
+    }
 
-    private GradientDrawable background(int color,int radius) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color);
-        d.setCornerRadius(dp(radius));
-        return d;
+    private GradientDrawable rounded(int color,int radius) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(radius));
+        return bg;
     }
 
     private GradientDrawable gradient() {
-        GradientDrawable d = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{0xFF21435C,0xFF122438});
-        d.setCornerRadius(dp(22));
-        return d;
+        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFF203E53,0xFF14283D});
+        bg.setCornerRadius(dp(17));
+        return bg;
     }
 
-    private TextView txt(String value,int size,int color,boolean bold) {
+    private TextView text(String value,int size,int color,boolean bold) {
         TextView t = new TextView(this);
         t.setText(value);
-        t.setTextColor(color);
         t.setTextSize(size);
-        if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        t.setTextColor(color);
+        if (bold) t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         return t;
     }
 
-    private TextView btn(String name,boolean accent,View.OnClickListener click) {
-        TextView t = txt(name,14,accent?BG:TEXT,true);
+    private TextView button(String name,boolean primary,int height,View.OnClickListener listener) {
+        TextView t = text(name,14,primary?BG:TEXT,true);
         t.setGravity(Gravity.CENTER);
-        t.setMinHeight(dp(48));
-        t.setPadding(dp(12),dp(10),dp(12),dp(10));
-        t.setBackground(background(accent?ACCENT:0xFF203245,13));
-        t.setOnClickListener(click);
+        t.setMinHeight(dp(height));
+        t.setPadding(dp(9),dp(7),dp(9),dp(7));
+        t.setBackground(rounded(primary?ACCENT:0xFF23364A,12));
+        t.setOnClickListener(listener);
         t.setFocusable(true);
         return t;
     }
 
-    private LinearLayout horizontal() {
-        LinearLayout line=new LinearLayout(this);
-        line.setOrientation(LinearLayout.HORIZONTAL);
-        line.setGravity(Gravity.CENTER_VERTICAL);
-        return line;
+    private LinearLayout row() {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        return r;
     }
 
-    private LinearLayout.LayoutParams equal(int weight) {
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0,dp(48),weight);
-        p.setMargins(dp(3),0,dp(3),0);
+    private LinearLayout.LayoutParams weighted(float w,int h) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0,dp(h),w);
+        p.setMargins(dp(2),0,dp(2),0);
         return p;
     }
 
-    private LinearLayout.LayoutParams margin(int top,int bottom) {
-        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);
+    private LinearLayout.LayoutParams spaced(int top,int bottom) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1,-2);
         p.setMargins(0,dp(top),0,dp(bottom));
         return p;
     }
 
-    @Override protected void onCreate(Bundle state) {
-        super.onCreate(state);
+    @Override protected void onCreate(Bundle saved) {
+        super.onCreate(saved);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
-        ScrollView scroll=new ScrollView(this);
+
+        ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(BG);
         scroll.setFillViewport(true);
-        LinearLayout root=new LinearLayout(this);
+        scroll.setClipToPadding(false);
+        root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18),dp(20),dp(18),dp(28));
         scroll.addView(root);
+        // Android 15/16 target 35 is edge-to-edge: controls must not sit under
+        // the system clock, battery or bottom gesture area.
+        scroll.setOnApplyWindowInsetsListener((view,insets) -> {
+            int top,bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets sys = insets.getInsets(
+                        WindowInsets.Type.systemBars() |
+                        WindowInsets.Type.displayCutout());
+                top = sys.top;
+                bottom = sys.bottom;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(dp(16),top+dp(9),dp(16),bottom+dp(18));
+            return insets;
+        });
         setContentView(scroll);
+        scroll.requestApplyInsets();
 
-        LinearLayout header=horizontal();
-        TextView title=txt("CarVideo",31,TEXT,true);
-        header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        header.addView(btn("Лог",false,v ->
-                startActivity(new Intent(this,DiagnosticsActivity.class))));
-        root.addView(header,margin(0,16));
+        LinearLayout header = row();
+        TextView name = text("CarVideo",25,TEXT,true);
+        header.addView(name,new LinearLayout.LayoutParams(0,-2,1f));
+        TextView logButton = button("Лог",false,40,v ->
+                startActivity(new Intent(this,DiagnosticsActivity.class)));
+        header.addView(logButton,new LinearLayout.LayoutParams(dp(56),dp(40)));
+        root.addView(header,spaced(0,12));
 
-        LinearLayout hero=new LinearLayout(this);
+        LinearLayout hero = new LinearLayout(this);
         hero.setOrientation(LinearLayout.VERTICAL);
-        hero.setPadding(dp(18),dp(18),dp(18),dp(15));
+        hero.setPadding(dp(14),dp(12),dp(14),dp(12));
         hero.setBackground(gradient());
-        root.addView(hero,margin(0,20));
-        nowTitle=txt("Выбери фильм",22,TEXT,true);
+        root.addView(hero,spaced(0,14));
+
+        LinearLayout titleRow = row();
+        nowTitle = text("Фильм не выбран",17,TEXT,true);
         nowTitle.setMaxLines(2);
-        hero.addView(nowTitle);
-        nowStatus=txt("Готово к просмотру",13,MUTED,false);
-        nowStatus.setPadding(0,dp(6),0,dp(13));
+        nowTitle.setEllipsize(TextUtils.TruncateAt.END);
+        titleRow.addView(nowTitle,new LinearLayout.LayoutParams(0,-2,1f));
+        optionsButton = button("⚙",false,40,v -> {
+            optionsExpanded = !optionsExpanded;
+            optionsRow.setVisibility(optionsExpanded?View.VISIBLE:View.GONE);
+        });
+        titleRow.addView(optionsButton,new LinearLayout.LayoutParams(dp(43),dp(40)));
+        hero.addView(titleRow);
+
+        nowStatus = text("Выбери фильм в списке ниже",12,MUTED,false);
+        nowStatus.setPadding(0,0,0,0);
         hero.addView(nowStatus);
 
-        timeline=new SeekBar(this);
+        playbackControls = new LinearLayout(this);
+        playbackControls.setOrientation(LinearLayout.VERTICAL);
+        hero.addView(playbackControls);
+
+        timeline = new SeekBar(this);
         timeline.setMax(1000);
-        timeline.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        timeline.setThumbTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        timeline.setMinHeight(dp(26));
+        timeline.setProgressTintList(ColorStateList.valueOf(ACCENT));
+        timeline.setThumbTintList(ColorStateList.valueOf(ACCENT));
         timeline.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar b,int progress,boolean user){}
-            @Override public void onStartTrackingTouch(SeekBar b){dragging=true;}
-            @Override public void onStopTrackingTouch(SeekBar b){
-                dragging=false;
-                PlaybackForegroundService service=PlaybackForegroundService.active();
-                if(service!=null && service.duration()>0)
-                    service.seekTo(service.duration()*b.getProgress()/1000);
+            @Override public void onProgressChanged(SeekBar bar,int progress,boolean fromUser) {}
+            @Override public void onStartTrackingTouch(SeekBar bar) {dragging = true;}
+            @Override public void onStopTrackingTouch(SeekBar bar) {
+                dragging = false;
+                PlaybackForegroundService service = PlaybackForegroundService.active();
+                if (service != null && service.duration() > 0)
+                    service.seekTo(service.duration()*bar.getProgress()/1000);
             }
         });
-        hero.addView(timeline);
-        nowTime=txt("00:00 / --:--",13,MUTED,false);
-        hero.addView(nowTime);
+        playbackControls.addView(timeline,spaced(5,0));
+        nowTime = text("00:00 / --:--",12,MUTED,false);
+        playbackControls.addView(nowTime);
 
-        LinearLayout controls=horizontal();
-        controls.setPadding(0,dp(13),0,0);
-        controls.addView(btn("−10 с",false,v -> jump(-10000)),equal(1));
-        controls.addView(btn("▶ / Ⅱ",true,v -> {
-            PlaybackForegroundService service=PlaybackForegroundService.active();
-            if(service!=null)service.toggle();
-            else Toast.makeText(this,"Запусти фильм на экране автомобиля",Toast.LENGTH_SHORT).show();
+        LinearLayout controls = row();
+        controls.setPadding(0,dp(8),0,0);
+        controls.addView(button("−10 c",false,42,v -> jump(-10000)),weighted(1,42));
+        controls.addView(button("▶ / Ⅱ",true,42,v -> {
+            PlaybackForegroundService s = PlaybackForegroundService.active();
+            if (s != null) s.toggle();
+            else Toast.makeText(this,"Открой выбранный фильм на экране автомобиля",
+                    Toast.LENGTH_SHORT).show();
             updatePlaying();
-        }),equal(2));
-        controls.addView(btn("+10 с",false,v -> jump(10000)),equal(1));
-        hero.addView(controls);
+        }),weighted(1.5f,42));
+        controls.addView(button("+10 c",false,42,v -> jump(10000)),weighted(1,42));
+        playbackControls.addView(controls);
 
-        LinearLayout modes=horizontal();
-        modes.setPadding(0,dp(11),0,0);
-        rateButton=btn("1×",false,v -> cycleRate());
-        pictureButton=btn("Заполнить",false,v -> cyclePicture());
-        modes.addView(rateButton,equal(1));
-        modes.addView(pictureButton,equal(2));
-        hero.addView(modes);
+        optionsRow = row();
+        optionsRow.setPadding(0,dp(9),0,0);
+        rateButton = button("1×",false,42,v -> cycleRate());
+        pictureButton = button("Заполнить",false,42,v -> cyclePicture());
+        optionsRow.addView(rateButton,weighted(1,42));
+        optionsRow.addView(pictureButton,weighted(1.5f,42));
+        optionsRow.setVisibility(View.GONE);
+        hero.addView(optionsRow);
 
-        root.addView(txt("Видео",22,TEXT,true),margin(4,11));
-        LinearLayout actions=horizontal();
-        actions.addView(btn("Выбрать папку",true,v -> pickFolder()),equal(2));
-        actions.addView(btn("Обновить",false,v -> scanFolder()),equal(1));
-        root.addView(actions);
-        folderName=txt(MediaCatalog.folderLabel(this),14,MUTED,false);
-        folderName.setPadding(dp(5),dp(12),0,0);
-        root.addView(folderName);
-        libraryStatus=txt("",12,MUTED,false);
-        libraryStatus.setPadding(dp(5),dp(5),0,dp(8));
-        root.addView(libraryStatus);
+        LinearLayout libraryHeader = row();
+        TextView libraryTitle = text("Мои видео",20,TEXT,true);
+        libraryHeader.addView(libraryTitle,new LinearLayout.LayoutParams(0,-2,1f));
+        countView = text("",13,MUTED,false);
+        libraryHeader.addView(countView);
+        root.addView(libraryHeader,spaced(2,7));
 
-        catalog=new LinearLayout(this);
+        LinearLayout folderTools = row();
+        folderName = text(MediaCatalog.folderLabel(this),13,MUTED,false);
+        folderName.setSingleLine(true);
+        folderName.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        folderTools.addView(folderName,new LinearLayout.LayoutParams(0,-2,1f));
+        folderTools.addView(button("Папка",false,38,v -> pickFolder()),
+                new LinearLayout.LayoutParams(dp(74),dp(38)));
+        TextView refreshButton = button("↻",false,38,v -> scanFolder());
+        LinearLayout.LayoutParams refreshParams =
+                new LinearLayout.LayoutParams(dp(43),dp(38));
+        refreshParams.setMargins(dp(6),0,0,0);
+        folderTools.addView(refreshButton,refreshParams);
+        root.addView(folderTools,spaced(0,5));
+
+        catalog = new LinearLayout(this);
         catalog.setOrientation(LinearLayout.VERTICAL);
         root.addView(catalog);
-        moreButton=btn("Показать остальные",false,v -> {
-            shown=Math.min(250,shown+30); renderCatalog();
+        moreButton = button("Показать остальные фильмы",false,44,v -> {
+            shown = Math.min(250,shown+30);
+            renderCatalog();
         });
-        root.addView(moreButton,margin(8,0));
-        TextView foot=txt("Просмотр на автомобиле — только на стоянке",11,MUTED,false);
-        foot.setGravity(Gravity.CENTER);
-        foot.setPadding(0,dp(22),0,0);
-        root.addView(foot);
+        root.addView(moreButton,spaced(8,0));
+
         renderCatalog();
         updatePlaying();
     }
 
-    private SharedPreferences prefs(){return getSharedPreferences("lab",MODE_PRIVATE);}
+    private SharedPreferences prefs() {
+        return getSharedPreferences("lab",MODE_PRIVATE);
+    }
 
     private void pickFolder() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -207,83 +260,96 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
-        if(request!=CHOOSE_FOLDER || result!=RESULT_OK || data==null || data.getData()==null)return;
-        Uri uri=data.getData();
+        if (request != CHOOSE_FOLDER || result != RESULT_OK ||
+                data == null || data.getData() == null) return;
+        Uri uri = data.getData();
         try {
             getContentResolver().takePersistableUriPermission(
                     uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch(SecurityException e){
-            Toast.makeText(this,"Разрешение на папку не сохранено",Toast.LENGTH_LONG).show();
+        } catch (SecurityException e) {
+            Toast.makeText(this,"Не удалось сохранить доступ к папке",
+                    Toast.LENGTH_LONG).show();
             return;
         }
         prefs().edit().putString("video_folder_uri",uri.toString()).apply();
-        shown=30;
+        shown = 40;
         folderName.setText(MediaCatalog.folderLabel(this));
         scanFolder();
     }
 
     private void scanFolder() {
-        if(prefs().getString("video_folder_uri",null)==null) {
+        if (prefs().getString("video_folder_uri",null) == null) {
             pickFolder();
             return;
         }
-        libraryStatus.setText("Обновление списка…");
+        countView.setText("Обновление…");
         new Thread(() -> {
-            int count=MediaCatalog.scanFolder(getApplicationContext());
+            int n = MediaCatalog.scanFolder(getApplicationContext());
             runOnUiThread(() -> {
-                if(isFinishing()||isDestroyed())return;
-                if(count>=0)libraryStatus.setText(count+" видео");
-                else libraryStatus.setText(
-                        prefs().getString("catalog_error","Нет доступа к папке"));
+                if (isFinishing() || isDestroyed()) return;
+                if (n < 0) {
+                    Toast.makeText(this,prefs().getString("catalog_error","Ошибка чтения папки"),
+                            Toast.LENGTH_LONG).show();
+                }
                 renderCatalog();
             });
-        },"CarVideo-folder-scan").start();
+        },"CarVideo-folder-refresh").start();
     }
 
     private void renderCatalog() {
-        if(catalog==null)return;
+        if (catalog == null) return;
         catalog.removeAllViews();
-        List<MediaCatalog.Entry> files=MediaCatalog.all(this);
-        if(moreButton!=null)
-            moreButton.setVisibility(files.size()>shown?View.VISIBLE:View.GONE);
-        if(libraryStatus!=null && prefs().getString("catalog_error",null)==null)
-            libraryStatus.setText(files.size()+" видео");
-        if(files.isEmpty()) {
-            TextView empty=txt("Выбери папку с фильмами",15,MUTED,false);
-            empty.setPadding(dp(6),dp(20),dp(6),dp(20));
+        List<MediaCatalog.Entry> movies = MediaCatalog.all(this);
+        countView.setText(movies.size()+" файлов");
+        folderName.setText(MediaCatalog.folderLabel(this));
+        moreButton.setVisibility(movies.size()>shown?View.VISIBLE:View.GONE);
+        if (movies.isEmpty()) {
+            TextView empty = text("Выбери папку с видео",15,MUTED,false);
+            empty.setPadding(dp(5),dp(18),dp(5),dp(24));
             catalog.addView(empty);
             return;
         }
-        String selected=prefs().getString("video_uri","");
-        for(int i=0;i<Math.min(shown,files.size());i++) {
-            MediaCatalog.Entry movie=files.get(i);
-            LinearLayout row=horizontal();
-            row.setPadding(dp(10),dp(9),dp(12),dp(9));
-            row.setBackground(background(movie.uri.equals(selected)?0xFF224457:PANEL,14));
-            catalog.addView(row,margin(4,3));
+        String selected = prefs().getString("video_uri","");
+        for (int i=0;i<Math.min(shown,movies.size());i++) {
+            MediaCatalog.Entry movie = movies.get(i);
+            LinearLayout item = row();
+            item.setPadding(dp(8),dp(5),dp(8),dp(5));
+            item.setBackground(rounded(movie.uri.equals(selected)?0xFF22455A:PANEL,12));
+            catalog.addView(item,spaced(3,3));
 
-            ImageView cover=new ImageView(this);
-            cover.setImageBitmap(MediaCatalog.poster(this,movie));
-            cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            cover.setTag(movie.uri);
-            LinearLayout.LayoutParams image=new LinearLayout.LayoutParams(dp(68),dp(68));
-            image.setMargins(0,0,dp(13),0);
-            row.addView(cover,image);
+            ImageView image = new ImageView(this);
+            image.setImageBitmap(MediaCatalog.poster(this,movie));
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setTag(movie.uri);
+            LinearLayout.LayoutParams thumb =
+                    new LinearLayout.LayoutParams(dp(57),dp(57));
+            thumb.setMargins(0,0,dp(11),0);
+            item.addView(image,thumb);
             MediaCatalog.preparePoster(this,movie,bitmap -> {
-                if(movie.uri.equals(cover.getTag())) cover.setImageBitmap(bitmap);
+                if (movie.uri.equals(image.getTag())) image.setImageBitmap(bitmap);
             });
 
-            TextView name=txt(movie.title,16,TEXT,true);
-            name.setSingleLine(false);
-            name.setMaxLines(2);
-            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            row.addView(name,new LinearLayout.LayoutParams(0,-2,1));
-            TextView play=txt("▶",20,ACCENT,true);
-            play.setPadding(dp(12),0,0,0);
-            row.addView(play);
-            row.setOnClickListener(v -> {
-                if(prefs().getBoolean("surface_connected",false) &&
-                        PlaybackForegroundService.active()==null)startAudio();
+            LinearLayout details = new LinearLayout(this);
+            details.setOrientation(LinearLayout.VERTICAL);
+            details.setGravity(Gravity.CENTER_VERTICAL);
+            TextView label = text(MediaCatalog.displayTitle(movie.title),15,TEXT,true);
+            label.setMaxLines(2);
+            label.setEllipsize(TextUtils.TruncateAt.END);
+            details.addView(label);
+            String subtitle = MediaCatalog.subtitle(this,movie);
+            if (!subtitle.isEmpty()) {
+                TextView sub = text(subtitle,11,MUTED,false);
+                sub.setPadding(0,dp(3),0,0);
+                details.addView(sub);
+            }
+            item.addView(details,new LinearLayout.LayoutParams(0,-1,1f));
+            TextView arrow = text("▶",18,ACCENT,true);
+            arrow.setPadding(dp(8),0,dp(5),0);
+            item.addView(arrow);
+
+            item.setOnClickListener(v -> {
+                if (prefs().getBoolean("surface_connected",false) &&
+                        PlaybackForegroundService.active() == null) startAudio();
                 MediaCatalog.choose(this,movie);
                 renderCatalog();
                 updatePlaying();
@@ -291,73 +357,84 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void startAudio(){
+    private void startAudio() {
         try {
-            if(Build.VERSION.SDK_INT>=26)
+            if (Build.VERSION.SDK_INT >= 26)
                 startForegroundService(new Intent(this,PlaybackForegroundService.class));
             else startService(new Intent(this,PlaybackForegroundService.class));
-        } catch(RuntimeException e){
+        } catch (RuntimeException e) {
             prefs().edit().putString("audio_diagnostics",
                     "Start service: "+e.getClass().getSimpleName()).apply();
         }
     }
 
-    private void jump(long amount){
-        PlaybackForegroundService s=PlaybackForegroundService.active();
-        if(s!=null)s.seekTo(s.position()+amount);
+    private void jump(long ms) {
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) service.seekTo(service.position()+ms);
         updatePlaying();
     }
 
-    private void cycleRate(){
-        float[] rates={0.75f,1f,1.25f,1.5f,2f};
-        float current=prefs().getFloat("playback_rate",1f);
-        int idx=1;
-        for(int i=0;i<rates.length;i++)
-            if(Math.abs(current-rates[i])<0.01f){idx=i;break;}
-        float next=rates[(idx+1)%rates.length];
-        PlaybackForegroundService service=PlaybackForegroundService.active();
-        if(service!=null)service.changeRate(next);
+    private void cycleRate() {
+        float[] choices = {0.75f,1f,1.25f,1.5f,2f};
+        float current = prefs().getFloat("playback_rate",1f);
+        int index=1;
+        for(int i=0;i<choices.length;i++) {
+            if (Math.abs(current-choices[i])<0.01f) {index=i;break;}
+        }
+        float next = choices[(index+1)%choices.length];
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) service.changeRate(next);
         else prefs().edit().putFloat("playback_rate",next).apply();
         updatePlaying();
     }
 
-    private void cyclePicture(){
-        String current=prefs().getString("picture_mode","fill");
-        String next="fit".equals(current)?"fill":"fit";
-        PlaybackForegroundService service=PlaybackForegroundService.active();
-        if(service!=null)service.changePicture(next);
+    private void cyclePicture() {
+        String current = prefs().getString("picture_mode","fill");
+        String next = "fit".equals(current)?"fill":"fit";
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) service.changePicture(next);
         else prefs().edit().putString("picture_mode",next).apply();
         updatePlaying();
     }
 
-    private void updatePlaying(){
-        if(nowTitle==null)return;
-        MediaCatalog.Entry entry=MediaCatalog.selected(this);
-        nowTitle.setText(entry==null?"Выбери фильм":entry.title);
-        PlaybackForegroundService service=PlaybackForegroundService.active();
+    private void updatePlaying() {
+        if (nowTitle == null) return;
+        MediaCatalog.Entry entry = MediaCatalog.selected(this);
+        boolean selected = entry != null;
+        if (selected != lastSelected) {
+            playbackControls.setVisibility(selected?View.VISIBLE:View.GONE);
+            lastSelected = selected;
+        }
+        nowTitle.setText(selected?MediaCatalog.displayTitle(entry.title):"Фильм не выбран");
+        PlaybackForegroundService s = PlaybackForegroundService.active();
         boolean connected=prefs().getBoolean("surface_connected",false);
-        nowStatus.setText(service!=null&&service.playing()?"▶ Воспроизведение" :
-                connected?"На паузе / готово":"Готово");
-        long pos=service!=null?service.position():prefs().getLong("last_position_ms",0);
-        long duration=service!=null?service.duration():0;
-        nowTime.setText(MediaCatalog.time(pos)+" / "+
-                (duration>0?MediaCatalog.time(duration):"--:--"));
-        if(!dragging && duration>0)
-            timeline.setProgress((int)Math.min(1000,pos*1000/duration));
-        float rate=prefs().getFloat("playback_rate",1f);
-        rateButton.setText(rate==1f?"1×":String.format(Locale.US,"%s×",rate));
-        pictureButton.setText("fit".equals(prefs().getString("picture_mode","fill")) ?
-                "Целиком" : "Заполнить");
+        nowStatus.setText(!selected?"Выбери фильм в списке ниже" :
+                s!=null&&s.playing()?"▶ Играет на Geely" :
+                connected?"Готов к воспроизведению на Geely":"Выбран для Geely");
+        if (selected) {
+            long pos = s!=null?s.position():prefs().getLong(
+                    PlaybackForegroundService.positionKey(Uri.parse(entry.uri)),0);
+            long duration = s!=null?s.duration():0;
+            nowTime.setText(MediaCatalog.time(pos)+" / "+
+                    (duration>0?MediaCatalog.time(duration):"--:--"));
+            if(!dragging && duration>0)
+                timeline.setProgress((int)Math.min(1000,pos*1000/duration));
+        }
+        float speed = prefs().getFloat("playback_rate",1f);
+        rateButton.setText(speed==1f?"1×":String.format(Locale.US,"%s×",speed));
+        pictureButton.setText("fit".equals(prefs().getString("picture_mode","fill"))?
+                "Целиком":"Заполнить");
     }
 
-    @Override protected void onResume(){
+    @Override protected void onResume() {
         super.onResume();
         renderCatalog();
         updatePlaying();
         ui.removeCallbacks(refresh);
         ui.post(refresh);
     }
-    @Override protected void onPause(){
+
+    @Override protected void onPause() {
         ui.removeCallbacks(refresh);
         super.onPause();
     }
