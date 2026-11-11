@@ -1,23 +1,32 @@
-# Car Surface Lab v0.1
+# Car Surface Lab v0.2 — independent diagnostic build
 
-Experimental, independent Android Auto display-surface project for **Geely EX5 EM-i + Xiaomi 15**.
+Experimental Android Auto surface test: **Xiaomi 15 / Android 16 / Geely EX5 EM-i (USB)**.
 
-**Status:** unverified prototype. A successful APK build does not prove it works on the car display.
+### Cross-source review
 
-- Select a local MP4 on the phone using the system file picker.
-- The Android Auto service requests a navigation drawing surface.
-- The service draws a static test pattern or attempts local MP4 rendering with Android MediaPlayer.
-- No root, Shizuku, Wi-Fi, server or vehicle firmware changes.
-- This is not a Google-supported video/navigation use of the navigation template; Android Auto may hide the app or reject the content.
-- Only test while parked. No speed-interlock modifications are included.
+- Fermata's main car app uses its legacy `CarActivityService`/projection path and works for video on this user's car in a restricted 2/3 layout.
+- AnyAuto uses an AndroidX `NavigationTemplate` drawing `Surface`, with `minCarApiLevel=5`, `Action.PAN`, stable/visible area handling and a Shizuku-controlled virtual display.
+- Our app uses the template surface directly with a local `MediaPlayer`. A virtual display is not needed to play one chosen MP4, but this approach is **not yet verified on the car**.
 
-## GitHub Actions
+Fixes from v0.1:
+- Include AndroidX `app-projected:1.7.0`, the official Android Auto projected dependency.
+- Declare min Car App API 5 at application level, consistent with surface click callbacks.
+- Add `Action.PAN` for gesture compatibility.
+- Track surface, visible and stable rectangles; draw diagnostic borders.
+- Stop the player and release callbacks at lifecycle teardown.
+- Show last Surface/MediaPlayer status in the phone app; it can be copied without Termux or ADB.
+- Separate application ID `dev.geely.carsurfacelab.v02` because v0.1's ephemeral GitHub Actions debug key cannot sign updates. **Do not uninstall v0.1 or Fermata.**
 
-Pull requests to main run `Build Android APK`. Download `CarSurfaceLab-debug-apk` from the successful run's **Artifacts** section. It contains `app-debug.apk` (debug-signed, not intended for production).
+### Build
 
-1. Install APK on Xiaomi 15.
-2. In its phone app choose a local MP4, or leave blank for test pattern.
-3. If Android Auto lists the app, open it over USB while parked and check surface dimensions, video and controls.
-4. Keep working Fermata/AnyAuto installed; this app is a separate experiment.
+Pull request CI generates an experimental debug-signed APK in `CarSurfaceLab-debug-apk` artifact.
 
-Reports of `not listed`, `blank screen`, or `surface works but MP4 doesn't` are valuable negative results, not build failures.
+### Parking-only test sequence
+
+1. Install this APK with the same trusted installation workflow used for other Android Auto test apps. It installs alongside v0.1.
+2. Open the phone app, leave **test pattern** selected. In Android Auto's phone settings, enable `Car Surface Lab v0.2` if listed.
+3. On the parked car, connect Xiaomi by USB, start Car Surface Lab v0.2 and inspect the grid. Green outline = full Surface; yellow = stable area; cyan = visible area.
+4. After reconnecting phone UI, open Car Surface Lab v0.2 and copy the diagnostic block. Report dimensions, blank screen or host rejection.
+5. Only after successful pattern rendering, choose a local MP4 and test sound and decoding.
+
+No assumptions about display safety while the vehicle moves; this is experimental use of a navigation template for non-navigation content. It is not a supported Google Play in-car video category and may be blocked by the host.

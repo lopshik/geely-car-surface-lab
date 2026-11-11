@@ -4,13 +4,18 @@
     <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <application
-        android:label="Car Surface Lab"
+        android:label="Car Surface Lab v0.2"
         android:icon="@android:drawable/ic_media_play"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false">
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
+        <!-- SurfaceCallback.onClick requires Car App API 5. -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="5" />
+
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -22,7 +27,6 @@
                 <action android:name="androidx.car.app.CarAppService" />
                 <category android:name="androidx.car.app.category.NAVIGATION" />
             </intent-filter>
-            <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="1" />
         </service>
     </application>
 </manifest>
