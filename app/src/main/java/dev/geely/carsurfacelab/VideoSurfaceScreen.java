@@ -53,13 +53,6 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
             invalidate();
         }
     };
-    private final Runnable refreshControls = new Runnable() {
-        @Override public void run() {
-            if (!controlsVisible || closed || !screenStarted) return;
-            invalidate();
-            handler.postDelayed(this, 4000L);
-        }
-    };
     private int width, height, sourceGeneration;
     private String errorMessage;
 
@@ -102,7 +95,6 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                 screenStarted = false;
                 controlsVisible = false;
                 handler.removeCallbacks(hideControls);
-                handler.removeCallbacks(refreshControls);
                 PlaybackForegroundService service = PlaybackForegroundService.active();
                 if (servicePlayback && service != null) {
                     service.suspendForCarUi("Car screen stopped / OEM camera or library");
@@ -168,8 +160,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                 .setOnClickListener(() -> {
                     controlsVisible = false;
                     handler.removeCallbacks(hideControls);
-                    handler.removeCallbacks(refreshControls);
-                    getScreenManager().push(new CarLibraryScreen(getCarContext()));
+                        getScreenManager().push(new CarLibraryScreen(getCarContext()));
                 }).build());
 
         if (controlsVisible && videoMode) {
@@ -205,21 +196,16 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                             .setOnClickListener(() -> seekOnSurface(10000)).build())
                     .build();
             template.setMapActionStrip(strip);
-            PlaybackForegroundService playback = PlaybackForegroundService.active();
-            long position = playback == null ? 0 : playback.position();
-            long duration = playback == null ? 0 : playback.duration();
-            String time = MediaCatalog.time(position) + " / " +
-                    (duration > 0 ? MediaCatalog.time(duration) : "--:--");
-            String aspect = "fit".equals(prefs().getString("picture_mode","fill"))
-                    ? "Целиком" : "Заполнить";
-            String details = speedText(prefs().getFloat("playback_rate",1f))
-                    + " • " + aspect + " • повторный тап: пауза/пуск";
-            template.setNavigationInfo(new MessageInfo.Builder(time)
-                    .setText(details).build());
+            // Keep NavigationInfo entirely absent while playing.
+            // Android Auto otherwise reserves a large left-hand message card
+            // and may recompute the map/Surface viewport while controls show.
+            // Playback feedback comes from CarToast and the phone remote.
         } else if (!videoMode || errorMessage != null) {
+            // This card is only needed while idle or after a player error,
+            // never while a movie is actually displayed.
             String title = errorMessage != null ? "Ошибка воспроизведения" : "Выбери фильм";
             String description = errorMessage != null ? errorMessage :
-                    "Открой «Видеотека» или выбери папку на телефоне.";
+                    "Открой видеотеку или выбери фильм на телефоне.";
             template.setNavigationInfo(
                     new MessageInfo.Builder(title).setText(description).build());
         }
@@ -240,9 +226,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         controlsVisible = true;
         record(reason);
         handler.removeCallbacks(hideControls);
-        handler.removeCallbacks(refreshControls);
         handler.postDelayed(hideControls, CONTROLS_HIDE_MS);
-        handler.postDelayed(refreshControls, 4000L);
         invalidate();
     }
 
@@ -316,7 +300,6 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         errorMessage = null;
         controlsVisible = false;
         handler.removeCallbacks(hideControls);
-        handler.removeCallbacks(refreshControls);
         if (!videoMode) {
             record("Waiting for video: Surface untouched (NO Canvas.lockCanvas)");
             invalidate();
@@ -460,7 +443,6 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         sourceGeneration++;
         controlsVisible = false;
         handler.removeCallbacks(hideControls);
-        handler.removeCallbacks(refreshControls);
         PlaybackForegroundService svc = PlaybackForegroundService.active();
         if (servicePlayback && svc != null) {
             svc.suspendForCarUi("Surface destroyed / OEM rear camera");

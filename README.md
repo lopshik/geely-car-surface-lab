@@ -79,3 +79,14 @@ AA icon changes: the two skip actions show −10 / +10 as high-contrast bitmap a
 **Not claimed:** no image-scaling defect can be established from the user's supplied log alone. Visible [14,14][1788,1038] differs from stable [14,100][1788,1038] as Android Auto host UI changes, not necessarily erroneous aspect ratio. FIT renderer untouched.
 
 Source archive of owner-verified v0.8.3 at archive/verified-carvideo083-20261112. Build and on-car tests are separate. New package dev.geely.carvideo.preview084, short label CV 084, does not replace v0.8.3.
+
+## 1.0.0-rc1: cleaner Geely playback canvas
+
+Owner photo and diagnostic log on 2026-11-12 (v0.8.4) confirmed:
+- NavigationTemplate MessageInfo with text `01:48 / --:-- · 1x · Целиком · повторный тап` is our *own* info card, not a Geely banner. It occupies the left side while player controls are visible, and may force host viewport recalculation.
+- Video and car audio remain functional, 1920x1080 in both direct FILL and optional EGL FIT mode. Saved timestamp from reverse-camera/lifecycle event restored at 203067ms.
+- Speed 1.25×, media session, paused seek and touch controls continue working. Long-running playback reported without MediaPlayer exception.
+- User sees video resize anomaly only while helper controls are showing, and says normal geometry returns when overlay disappears.
+
+**RC fix**: do not set NavigationInfo/MessageInfo at all when `videoMode` is active. Keep host action strips for library/play/skip/speed/aspect. Remove unnecessary 4s refresh/invalidate timer that forced host layout recalculation even when nothing had changed. Still show short idle/error card when no video plays. This is the minimal low-risk way to fix the user's picture without changing the proven decoder, EGL aspect computation, audio or reverse-camera lifecycle. It needs on-car verification.
+**Build**: standalone preview package `dev.geely.carvideo.rc1`, launcher label CarVideo. Do not call it a verified final release until real car tests confirm overlay behavior, and do not publish Android Auto navigation Surface video as an officially supported video-app category.
