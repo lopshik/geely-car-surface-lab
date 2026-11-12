@@ -1,92 +1,91 @@
-# CarVideo 0.8 Preview — focused player
+# CarVideo — experimental local video playback on Geely EX5 EM-i
 
-## Verified reference
-Owner-tested CarVideo 0.7.1 commit \`35274be50982d9a6123ddc19911be388405439f8\` on Xiaomi 15 + Geely EX5 EM-i:
-- Decodes 1916×800 and 1920×1080 on projected Surface 1802×1052.
-- Geely speaker audio via remote-submix and GRANTED audio focus; on-car selection, play/pause work.
-- Per-file position resume: restored at 00:13.282 and continued roughly 21 min without logged playback errors.
-- Reverse camera position restore separately verified in 0.6.
-- Reference archived as \`archive/verified-carvideo071-20261111\` and older 0.6 archive.
-**0.8 is not verified on Geely yet; CI success does not equal runtime acceptance.**
+[Русский](#русский) · [English](#english)
 
-## Product direction (user requirements)
-- Remove test/developer texts, device/USB branding, phone standalone player.
-- One user-selected folder via \`ACTION_OPEN_DOCUMENT_TREE\` (persistable grant), then just **Обновить**; single nonrecursive folder enumeration via DocumentsContract, no broad media permission. Android 11+ forbids choosing the Download root; use an ordinary subfolder such as Movies/MyVideos.
-- Small movie list on Xiaomi with local thumbnails, chosen file launches Geely playback on car; no favorites, search, MP4 picker, or nested menus.
-- Car \`Видеотека\` remains direct; a new settings action opens a 2-row speed/image list.
-- Speed: 0.75/1/1.25/1.5/2 via PlaybackParams with pause-aware behavior, preserving pitch when supported.
-- Image: **Заполнить** is direct MediaPlayer SCALE_TO_FIT_WITH_CROPPING, aspect-preserving and efficient (default). **Целиком** routes decoder frames through a frame-driven external-OES EGL renderer, letterboxes while preserving source aspect. Aspect-preserving fit adds GPU cost and requires on-car testing; renderer may fall back to direct fill if EGL init fails.
-- The fixed Android Auto Surface can still have OEM template cropping/strips. Embedded black bars in source media cannot be removed without cropping more of the picture.
-- Diagnostics moved to separate native screen; its Copy and Share actions are pinned above the scrollable log so long movie lists don't impede collection.
-- Rear camera and car host lifecycle retain priority, existing per-file resume with paused return is preserved.
-- No root, permanently enabled Shizuku, head unit modification, moving-vehicle video guarantee or safety bypass.
+> **Research project. Not an official Geely or Google product.**
+> Video uses an experimental Android Auto NavigationTemplate Surface, **not** an officially supported video-app category on Android Auto. **Use only while safely parked.** The application cannot reliably detect vehicle movement or automatically guarantee a stationary-only display. No public production APK is claimed.
 
-## How to test on parked Geely
-1. Install Preview 08 next to 0.7.1 through the same KingInstaller workflow. Confirm icon/title simply **CarVideo**.
-2. Open phone app, choose video folder once and grant Android read access, then **Обновить**. Videos should appear (no + MP4, search, favorites, or phone playback test).
-3. On Geely open **CarVideo** -> **Видеотека**, select movie with sound. Verify unchanged sound/selection.
-4. Test settings icon on the car player: speed 1x→1.25x, then 2x, toggle **Заполнить** vs **Целиком** for one 1916×800 and one 1920×1080 movie. The first mode may crop outer parts while filling; the second should show entire frame with letterboxing and never stretch. Send diagnostics if FIT EGL fails or audio desynchronizes.
-5. Check camera override and paused resume from correct timestamp. Separate **Лог** at the top of phone app copies report in one tap.
-6. If regression, revert to archived v0.7.1. No measured long-run power/thermal results yet.
+## Русский
 
-This preview build uses an ephemeral CI debug signing key and a new package \`dev.geely.carvideo.preview08\`. Final release requires a stable private signing key and validated update path; do not present this package as signed production release.
+**CarVideo** — независимый исследовательский проект: локальные фильмы с телефона Android отображаются на экране Geely EX5 EM-i через проводное Android Auto, со звуком через автомобильные динамики. Для проверенной конфигурации не потребовались root, Shizuku или изменения прошивки ГУ.
 
-Primary Android references:
-- MediaPlayer VIDEO_SCALING_MODE_SCALE_TO_FIT stretches rather than necessarily preserving aspect; SCALE_TO_FIT_WITH_CROPPING preserves aspect: https://developer.android.com/reference/android/media/MediaPlayer
-- PlaybackParams speed change may start paused player: https://developer.android.com/reference/android/media/MediaPlayer#setPlaybackParams(android.media.PlaybackParams)
-- One-folder SAF access and limitations: https://developer.android.com/training/data-storage/shared/documents-files
-- DocumentsContract folder enumerator: https://developer.android.com/reference/android/provider/DocumentsContract
+**Реально проверено:** Geely EX5 EM-i + Xiaomi 15 (Android 16, HyperOS 3), экран Android Auto Surface 1802×1052, локальные файлы с видео 1920×1080 и 1916×800, звук через `remote-submix` с полученным Audio Focus, воспроизведение и пауза касанием, выбор фильма прямо на ГУ, скорость 1.25×, переключение «Заполнить/Целиком», восстановление позиции после закрытия штатной камерой заднего вида. Последняя подробно проверенная сборка — **0.8.4 Preview**.
 
-## 0.8.1 finishing fixes
-- No Xiaomi name on the car waiting screen; generic "Выбери фильм".
-- Audio FGS manual rescue button is tucked inside the separate diagnostic screen ("Лог" → "Звук для ГУ"). This is for Android 16 builds where a car-initiated foreground service start is rejected.
-- Updated preview package ID to `dev.geely.carvideo.preview081`; code reference includes the optional FIT graphical renderer and safe-area behavior. Still requires actual Geely testing.
+**Версия 1.0 RC1** устраняет навигационную информационную плашку поверх фильма и избыточное обновление шаблона каждые четыре секунды. **Работа этого исправления на реальном Geely ещё не подтверждена**. Не путайте успешную сборку GitHub Actions с испытанием автомобиля.
 
-## CarVideo 0.8.2 — compact Xiaomi UI (requires device acceptance)
-Based on owner's screenshot of 0.8.1:
-- MainActivity and DiagnosticsActivity handle Android 15/16 status and gesture bar safe-area insets via WindowInsets; Log button is no longer positioned under battery icons.
-- More compact title/header. Empty now-playing card hides transport and seek controls until movie selected; settings speed and aspect controls are behind a gear button.
-- Compact 57dp thumbnail movie rows and inline folder/refresh actions allow more movies per screen.
-- Titles are cleaned for display only (year preserved and release tags separated), without renaming any source files or changing content URIs.
-- Real frame thumbnails from MediaMetadataRetriever when SAF provider doesn't return them. Off-main-thread worker and disk cache are retained.
-- Geely library titles are cleaned; no changes to playback service, foreground audio, video Surface, rear camera or per-file bookmark handling.
-- Preview package dev.geely.carvideo.preview082; short Android Auto label CV 082. Separate from 0.8.1 and verified 0.7.1.
-- CI compilation and Android car acceptance are different milestones; do not call this production release before vehicle verification.
+### Возможности
+- Одна выбранная папка с фильмами на телефоне (Android Storage Access Framework), обновление списка по кнопке.
+- Компактный интерфейс телефона и простая видеотека списком на ГУ; без поиска и избранного.
+- Касание видео — показать кнопки; повторное касание — пауза/пуск.
+- Перемотка на 10 секунд, скорость 0,75× / 1× / 1,25× / 1,5× / 2×.
+- Изображение: **Заполнить** — с возможной обрезкой краёв, **Целиком** — с чёрными полосами при несовпадении пропорций.
+- Запоминание позиции отдельно для каждого файла; при прерывании Android Auto экраном камеры сохраняется позиция, после возвращения фильм стоит на паузе.
+- Отдельная диагностика на телефоне: «Лог» → «Скопировать».
 
-## CarVideo 0.8.3 — on-car controls and readable movie list
+### Сборка из исходников
 
-Based on owner's verified v0.8.2 car log (2026-11-12 07:31–07:39 GMT+03):
-- 1920×1038 video FILL succeeded, audio focus GRANTED and routed to remote-submix, per-file bookmark restored at 16.589s, 89.710s, 123.743s.
-- FIT EGL renderer was ready and decoded video, with 4m50s recorded until screen stopped; user reports playback works. Whether specific display modes have the intended aesthetic requires visual confirmation.
-- Working v0.8.2 commit pinned in archive/verified-carvideo082-20261112 before these UI changes.
+Требуются JDK 17, Android SDK 35, Gradle 8.11.1 и Android Gradle Plugin 8.9.2. В корне проекта выполните:
 
-New 0.8.3:
-- First touch anywhere on projected video only exposes controls; second touch on bare video toggles play/pause. The host draws controls so no Canvas conflicts with MediaPlayer.
-- While exposed, top bar shows library and two quick actions to cycle speed and picture mode. Right action strip shows seek -10s, pause/play, seek +10s. Position, total time, speed and current fit/fill mode are provided as a host MessageInfo. After 12 seconds, controls auto-hide. No settings Screen is entered, so opening speed/size controls does not trigger screen onStop or unnecessary audio/video pause.
-- NavigationTemplate refresh is supported by Car App Library, but exact positioning/visibility of host-owned controls varies by Android Auto head unit, and host auto-hides action strips after inactivity. This behavior requires in-car acceptance. Video Surface untouched.
-- Library switches from GridTemplate to ListTemplate, no large thumbnails taking away name width. For long titles, first line + wrapping secondary text shows more of the film name; files remain sorted as before, no user search/favorites. Paging obeys host's CONTENT_LIMIT_TYPE_LIST, tested on Geely only after installation.
-- All previously tested playback, audio focus, Surface lifecycle, reverse camera paused resume and one-folder phone library retained. No geely firmware changes. Only use video while the vehicle is parked.
-- Install isolated Preview 083 via existing KingInstaller workflow. Previous 0.8.2 remains available; CI debug APK is not a production release.
+```sh
+gradle --no-daemon :app:assembleDebug
+```
 
-## CarVideo 0.8.4 — icon clarity + seek-state bugfix
+Результат: `app/build/outputs/apk/debug/app-debug.apk`. В GitHub Actions используется та же команда; скачиваемые оттуда тестовые APK подписываются временным debug-ключом среды сборки. **Такая подпись не подходит для стабильных обновлений.** Публичного подписанного production APK пока нет.
 
-Owner supplied actual car log from v0.8.3 on 2026-11-12: two-stage tap worked, speed 1.25× worked, foreground audio focus GRANTED and remote-submix route, per-movie paused resume at 1475921ms and 1693667ms. The user is happy with the text-list video library but wants skip actions marked numerically “−10” and “+10”, with a distinct speed pictogram.
+При первом запуске выберите обычную подпапку с фильмами; Android 11+ может запрещать предоставление доступа к корню Download. Приложение запрашивает доступ только к выбранному каталогу.
 
-**Confirmed bug discovered in code:** MediaPlayer.OnSeekCompleteListener installed in onPrepared called finishPreparing on EVERY subsequent user seek, resulting in numerous duplicate “Playing” reports and repeated p.start()/applyRate(), potentially inadvertently resuming a paused film. Android reference explicitly documents the callback for each seekTo. v0.8.4 makes the initial restore seek listener one-shot and clears it before calling finishPreparing. Ordinary seek now stores requested timestamp rather than stale getCurrentPosition, and new skipBy() rate-limits held/repeating AA action events to one every 550ms, using a cumulative target.
- 
-AA icon changes: the two skip actions show −10 / +10 as high-contrast bitmap action icons; speed action uses a distinct “×” icon rather than the fast-forward arrow. Host may tint or resize custom icons; final legibility requires Geely test. All other controls and the ListTemplate movie catalog are preserved.
+### Ограничения и безопасность
 
-**Not claimed:** no image-scaling defect can be established from the user's supplied log alone. Visible [14,14][1788,1038] differs from stable [14,100][1788,1038] as Android Auto host UI changes, not necessarily erroneous aspect ratio. FIT renderer untouched.
+- **Только на стоянке.** Приложение не содержит надёжного контроля скорости/передачи и не реализует безопасность уровня штатных автомобильных систем. Не включайте видео во время движения.
+- В Android Auto категория видеоплееров официально не поддерживается так же, как видео на Android Automotive OS: [поддерживаемые категории](https://developer.android.com/docs/quality-guidelines/car-app-quality).
+- Использование `NavigationTemplate` и `SurfaceCallback` для видео экспериментально; его доступность может измениться после обновлений Android Auto или на других автомобилях.
+- Реальная совместимость, энергопотребление, длительные испытания, сертификация и безопасность публикации для других автомобилей **не подтверждены**.
+- Камера заднего вида всегда должна иметь приоритет. CarVideo реагирует на прерывание экрана Android Auto; оно **не считывает передачу R**.
+- Не собирайте и не публикуйте приватные ключи подписи, персональные диагностические логи, фотографии пассажиров, видеозаписи или чужие фильмы.
 
-Source archive of owner-verified v0.8.3 at archive/verified-carvideo083-20261112. Build and on-car tests are separate. New package dev.geely.carvideo.preview084, short label CV 084, does not replace v0.8.3.
+### История проекта
 
-## 1.0.0-rc1: cleaner Geely playback canvas
+| Этап | Результат |
+|---|---|
+| CSL 0.3–0.5 | От сетки до подтверждённого видео и звука через Geely |
+| CarVideo 0.6 | Выбор фильма с ГУ и сохранение позиции после камеры |
+| 0.7.1 | Простой каталог; проверен просмотр примерно 21 минуты |
+| 0.8.1–0.8.2 | Одна папка, скорость, режимы изображения, компактный интерфейс |
+| 0.8.3–0.8.4 | Видеотека списком, двухэтапное касание, исправление повторных запусков при перемотке |
+| 1.0 RC1 | Убрана верхняя информационная плашка; **требуется проверка на машине** |
 
-Owner photo and diagnostic log on 2026-11-12 (v0.8.4) confirmed:
-- NavigationTemplate MessageInfo with text `01:48 / --:-- · 1x · Целиком · повторный тап` is our *own* info card, not a Geely banner. It occupies the left side while player controls are visible, and may force host viewport recalculation.
-- Video and car audio remain functional, 1920x1080 in both direct FILL and optional EGL FIT mode. Saved timestamp from reverse-camera/lifecycle event restored at 203067ms.
-- Speed 1.25×, media session, paused seek and touch controls continue working. Long-running playback reported without MediaPlayer exception.
-- User sees video resize anomaly only while helper controls are showing, and says normal geometry returns when overlay disappears.
+Проверенная ветка для отката: [0.8.4](https://github.com/lopshik/geely-car-surface-lab/tree/archive/verified-carvideo083-20261112) (историческая 0.8.3); более ранние версии также архивированы.
 
-**RC fix**: do not set NavigationInfo/MessageInfo at all when `videoMode` is active. Keep host action strips for library/play/skip/speed/aspect. Remove unnecessary 4s refresh/invalidate timer that forced host layout recalculation even when nothing had changed. Still show short idle/error card when no video plays. This is the minimal low-risk way to fix the user's picture without changing the proven decoder, EGL aspect computation, audio or reverse-camera lifecycle. It needs on-car verification.
-**Build**: standalone preview package `dev.geely.carvideo.rc1`, launcher label CarVideo. Do not call it a verified final release until real car tests confirm overlay behavior, and do not publish Android Auto navigation Surface video as an officially supported video-app category.
+### Благодарности
+
+- **Android Open Source Project / Google** — Android SDK, `MediaPlayer`, `MediaSession`, `SurfaceTexture`, `Storage Access Framework`, `EGL` и документация.
+- **AndroidX Car App Library** — `NavigationTemplate`, `ListTemplate`, `SurfaceCallback`; библиотека распространяется по лицензии Apache 2.0.
+- **GitHub Actions** — инфраструктура повторяемых сборок.
+- **ChatGPT (OpenAI)** — помощь в проектировании, коде, диагностике и подготовке документации.
+- **Владельцу автомобиля и автору испытаний** — практические проверки на Geely EX5 EM-i, журналирование и обратная связь.
+
+Мы не заявляем, что копировали исходный код из какого-либо стороннего проекта. Если обнаружатся заимствованные фрагменты, их лицензии и авторство должны быть указаны дополнительно. См. [NOTICE](NOTICE.md).
+
+**Лицензия собственного кода:** [Apache 2.0](LICENSE).
+
+---
+
+## English
+
+CarVideo is an **independent, experimental** Android phone application that sends local video and audio to the projected Android Auto display in a Geely EX5 EM-i. It does not require head-unit firmware changes, root, or Shizuku on the successfully tested phone/vehicle combination.
+
+**Owner-tested hardware:** Geely EX5 EM-i head unit, Xiaomi 15 running Android 16 / HyperOS 3. Verified features include car-screen movie selection, audio through the car speakers, different local video resolutions, 1.25× speed, touch play/pause, and paused position restoration after OEM camera interruption. These results are **specific to this combination**.
+
+Version **1.0 RC1** removes the large navigation info card displayed over playback. That change is **compiled but not yet vehicle-tested**.
+
+Build with JDK 17 / Android SDK 35 / Gradle 8.11.1:
+
+```sh
+gradle --no-daemon :app:assembleDebug
+```
+
+This produces a **debug-signed experimental build**, not a production-signed release. A stable app identity, preserved signing key, and regression tests are required before version 1.0 can be distributed as a supported update.
+
+**Safety and limitations:** For use only while safely parked. This project has no reliable gear/speed interlock, and Android Auto does not list video as a supported app category. It uses a navigation Surface experimentally. Do not use it while driving; compatibility may break with host updates. This project is not affiliated with or endorsed by Geely, Google or OpenAI.
+
+Source license: [Apache License 2.0](LICENSE). Third-party acknowledgments: [NOTICE.md](NOTICE.md).
