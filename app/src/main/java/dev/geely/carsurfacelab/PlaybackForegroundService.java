@@ -444,10 +444,10 @@ public final class PlaybackForegroundService extends Service {
         }
     }
 
-    public void skipBy(long deltaMs) {
-        if (player == null || !prepared) return;
+    public boolean skipBy(long deltaMs) {
+        if (player == null || !prepared) return false;
         long now = SystemClock.uptimeMillis();
-        if (now - lastCarSkipUptimeMs < CAR_SKIP_MIN_INTERVAL_MS) return;
+        if (now - lastCarSkipUptimeMs < CAR_SKIP_MIN_INTERVAL_MS) return false;
         long base = now - lastCarSkipUptimeMs < 1800L
                 ? lastCarSkipTargetMs : position();
         long max = duration();
@@ -457,6 +457,7 @@ public final class PlaybackForegroundService extends Service {
         lastCarSkipTargetMs = target;
         seekTo(target);
         report("Car skip " + (deltaMs/1000) + "s -> " + target + "ms");
+        return true;
     }
 
     private static String route(MediaPlayer p) {

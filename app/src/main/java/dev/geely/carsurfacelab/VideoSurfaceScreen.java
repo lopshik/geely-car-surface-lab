@@ -25,6 +25,7 @@ import androidx.car.app.SurfaceContainer;
 import androidx.car.app.model.Action;
 import androidx.car.app.model.ActionStrip;
 import androidx.car.app.model.CarIcon;
+import androidx.car.app.model.CarColor;
 import androidx.core.graphics.drawable.IconCompat;
 import androidx.car.app.model.Template;
 import androidx.car.app.navigation.model.MessageInfo;
@@ -43,6 +44,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     private MediaPlayer player;
     private boolean servicePlayback, videoMode, closed, screenStarted;
     private boolean controlsVisible;
+    private CarIcon rewindTenIcon, forwardTenIcon, playbackSpeedIcon;
     private static final long CONTROLS_HIDE_MS = 12000L;
     private final Runnable hideControls = () -> {
         if (controlsVisible && !closed) {
@@ -128,6 +130,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
 
     /** Short-number icons stay legible on a compact Android Auto action strip. */
     private CarIcon textIcon(String text) {
+        if ("−10".equals(text) && rewindTenIcon != null) return rewindTenIcon;
+        if ("+10".equals(text) && forwardTenIcon != null) return forwardTenIcon;
+        if ("×".equals(text) && playbackSpeedIcon != null) return playbackSpeedIcon;
         Bitmap bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -137,7 +142,12 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         p.setTextAlign(Paint.Align.CENTER);
         p.setTextSize(text.length() > 3 ? 32f : 45f);
         canvas.drawText(text, 48f, 63f, p);
-        return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
+        CarIcon icon = new CarIcon.Builder(IconCompat.createWithBitmap(bitmap))
+                .setTint(CarColor.DEFAULT).build();
+        if ("−10".equals(text)) rewindTenIcon = icon;
+        else if ("+10".equals(text)) forwardTenIcon = icon;
+        else if ("×".equals(text)) playbackSpeedIcon = icon;
+        return icon;
     }
 
     /** All playback controls are supplied by the Android Auto host. */
@@ -267,8 +277,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     private void seekOnSurface(long delta) {
         PlaybackForegroundService service = PlaybackForegroundService.active();
         if (service != null) {
-            service.skipBy(delta);
-            showControls("Car skip button " + (delta/1000) + "s");
+            if (service.skipBy(delta)) {
+                showControls("Car skip button " + (delta/1000) + "s");
+            }
         } else {
             record("Seek requested without service player");
             showControls("No service player for seek");
