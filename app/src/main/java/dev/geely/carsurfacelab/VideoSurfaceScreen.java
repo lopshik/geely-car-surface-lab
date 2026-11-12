@@ -13,6 +13,7 @@ import android.view.Surface;
 
 import androidx.annotation.NonNull;
 import androidx.car.app.AppManager;
+import androidx.car.app.CarToast;
 import androidx.car.app.CarContext;
 import androidx.car.app.Screen;
 import androidx.car.app.SurfaceCallback;
@@ -37,6 +38,22 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     private Surface surface;
     private MediaPlayer player;
     private boolean servicePlayback, videoMode, closed, screenStarted;
+    private boolean controlsVisible;
+    private static final long CONTROLS_HIDE_MS = 12000L;
+    private final Runnable hideControls = () -> {
+        if (controlsVisible && !closed) {
+            controlsVisible = false;
+            record("Car playback controls hidden");
+            invalidate();
+        }
+    };
+    private final Runnable refreshControls = new Runnable() {
+        @Override public void run() {
+            if (!controlsVisible || closed || !screenStarted) return;
+            invalidate();
+            handler.postDelayed(this, 4000L);
+        }
+    };
     private int width, height, sourceGeneration;
     private String errorMessage;
 
@@ -77,6 +94,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
             }
             @Override public void onStop(@NonNull LifecycleOwner owner) {
                 screenStarted = false;
+                controlsVisible = false;
+                handler.removeCallbacks(hideControls);
+                handler.removeCallbacks(refreshControls);
                 PlaybackForegroundService service = PlaybackForegroundService.active();
                 if (servicePlayback && service != null) {
                     service.suspendForCarUi("Car screen stopped / OEM camera or library");
@@ -102,35 +122,139 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         return getCarContext().getSharedPreferences("lab", Context.MODE_PRIVATE);
     }
 
+    /** All playback controls are supplied by the Android Auto host. */
+    private CarIcon carIcon(int resource) {
+        return new CarIcon.Builder(
+                IconCompat.createWithResource(getCarContext(), resource)).build();
+    }
+
+    private static String speedText(float value) {
+        if (value == 1f) return "1×";
+        return String.format(java.util.Locale.US, "%s×", value);
+    }
+
     @NonNull @Override public Template onGetTemplate() {
-        NavigationTemplate.Builder b = new NavigationTemplate.Builder()
-                .setActionStrip(new ActionStrip.Builder()
-                        .addAction(new Action.Builder().setTitle("Видеотека")
-                                .setOnClickListener(() -> getScreenManager().push(
-                                        new CarLibraryScreen(getCarContext())))
-                                .build())
-                        .addAction(new Action.Builder()
-                                .setIcon(new CarIcon.Builder(IconCompat.createWithResource(
-                                        getCarContext(), android.R.drawable.ic_media_play)).build())
-                                .setOnClickListener(this::togglePlayback).build())
-                        .addAction(new Action.Builder()
-                                .setIcon(new CarIcon.Builder(IconCompat.createWithResource(
-                                        getCarContext(), android.R.drawable.ic_menu_manage)).build())
-                                .setOnClickListener(() -> getScreenManager().push(
-                                        new PlaybackOptionsScreen(getCarContext())))
-                                .build())
-                        .build())
-                .setMapActionStrip(new ActionStrip.Builder().addAction(Action.PAN).build())
-                .setPanModeListener(on -> Log.i(TAG, "Pan: " + on));
-        // MessageInfo is rendered by the Android Auto host, not by lockCanvas().
-        // Prevents mixing a CPU Canvas producer with a MediaPlayer video producer.
-        if (!videoMode || errorMessage != null) {
-            String title = errorMessage != null ? "Playback error" : "Выбери фильм";
-            String description = errorMessage != null ? errorMessage
-                    : "Открой «Видеотека» или выбери папку на телефоне.";
-            b.setNavigationInfo(new MessageInfo.Builder(title).setText(description).build());
+        ActionStrip.Builder header = new ActionStrip.Builder();
+        header.addAction(new Action.Builder()
+                .setTitle("Видеотека")
+                .setOnClickListener(() -> {
+                    controlsVisible = false;
+                    handler.removeCallbacks(hideControls);
+                    handler.removeCallbacks(refreshControls);
+                    getScreenManager().push(new CarLibraryScreen(getCarContext()));
+                }).build());
+
+        if (controlsVisible && videoMode) {
+            header.addAction(new Action.Builder()
+                    .setIcon(carIcon(android.R.drawable.ic_media_ff))
+                    .setOnClickListener(this::changeSpeedOnSurface).build());
+            header.addAction(new Action.Builder()
+                    .setIcon(carIcon(android.R.drawable.ic_menu_crop))
+                    .setOnClickListener(this::changePictureOnSurface).build());
         }
-        return b.build();
+
+        NavigationTemplate.Builder template = new NavigationTemplate.Builder()
+                .setActionStrip(header.build());
+
+        if (controlsVisible && videoMode) {
+            // Three host-owned touch targets. No separate settings Screen:
+            // the decoder and foreground service remain alive, and playback
+            // does not stop merely because the user wants a different speed.
+            ActionStrip strip = new ActionStrip.Builder()
+                    .addAction(new Action.Builder()
+                            .setIcon(carIcon(android.R.drawable.ic_media_rew))
+                            .setOnClickListener(() -> seekOnSurface(-10000)).build())
+                    .addAction(new Action.Builder()
+                            .setIcon(carIcon(isPlaying() ?
+                                    android.R.drawable.ic_media_pause :
+                                    android.R.drawable.ic_media_play))
+                            .setOnClickListener(() -> {
+                                togglePlayback();
+                                showControls("Car play/pause action");
+                            }).build())
+                    .addAction(new Action.Builder()
+                            .setIcon(carIcon(android.R.drawable.ic_media_ff))
+                            .setOnClickListener(() -> seekOnSurface(10000)).build())
+                    .build();
+            template.setMapActionStrip(strip);
+            PlaybackForegroundService playback = PlaybackForegroundService.active();
+            long position = playback == null ? 0 : playback.position();
+            long duration = playback == null ? 0 : playback.duration();
+            String time = MediaCatalog.time(position) + " / " +
+                    (duration > 0 ? MediaCatalog.time(duration) : "--:--");
+            String aspect = "fit".equals(prefs().getString("picture_mode","fill"))
+                    ? "Целиком" : "Заполнить";
+            String details = speedText(prefs().getFloat("playback_rate",1f))
+                    + " • " + aspect + " • повторный тап: пауза/пуск";
+            template.setNavigationInfo(new MessageInfo.Builder(time)
+                    .setText(details).build());
+        } else if (!videoMode || errorMessage != null) {
+            String title = errorMessage != null ? "Ошибка воспроизведения" : "Выбери фильм";
+            String description = errorMessage != null ? errorMessage :
+                    "Открой «Видеотека» или выбери папку на телефоне.";
+            template.setNavigationInfo(
+                    new MessageInfo.Builder(title).setText(description).build());
+        }
+        return template.build();
+    }
+
+    private boolean isPlaying() {
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (servicePlayback && service != null) return service.playing();
+        if (player != null) {
+            try { return player.isPlaying(); }
+            catch (RuntimeException ignored) {}
+        }
+        return false;
+    }
+
+    private void showControls(String reason) {
+        controlsVisible = true;
+        record(reason);
+        handler.removeCallbacks(hideControls);
+        handler.removeCallbacks(refreshControls);
+        handler.postDelayed(hideControls, CONTROLS_HIDE_MS);
+        handler.postDelayed(refreshControls, 4000L);
+        invalidate();
+    }
+
+    private void changeSpeedOnSurface() {
+        float[] rates = {0.75f, 1f, 1.25f, 1.5f, 2f};
+        float existing = prefs().getFloat("playback_rate",1f);
+        int index = 1;
+        for (int i = 0; i < rates.length; i++) {
+            if (Math.abs(rates[i]-existing) < 0.001f) { index = i; break; }
+        }
+        float next = rates[(index+1)%rates.length];
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) service.changeRate(next);
+        else prefs().edit().putFloat("playback_rate", next).apply();
+        CarToast.makeText(getCarContext(), "Скорость " + speedText(next),
+                CarToast.LENGTH_SHORT).show();
+        showControls("Speed changed to " + next + "x on Surface");
+    }
+
+    private void changePictureOnSurface() {
+        String next = "fit".equals(prefs().getString("picture_mode","fill")) ?
+                "fill" : "fit";
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) service.changePicture(next);
+        else prefs().edit().putString("picture_mode",next).apply();
+        CarToast.makeText(getCarContext(),
+                "Кадр: " + ("fit".equals(next) ? "Целиком" : "Заполнить"),
+                CarToast.LENGTH_SHORT).show();
+        showControls("Picture mode changed to " + next + " on Surface");
+    }
+
+    private void seekOnSurface(long delta) {
+        PlaybackForegroundService service = PlaybackForegroundService.active();
+        if (service != null) {
+            service.seekTo(service.position()+delta);
+            showControls("Seek " + delta + "ms on Surface");
+        } else {
+            record("Seek requested without service player");
+            showControls("No service player for seek");
+        }
     }
 
     @Override public void onSurfaceAvailable(@NonNull SurfaceContainer s) {
@@ -161,6 +285,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         String chosen = prefs().getString("video_uri", null);
         videoMode = chosen != null && !chosen.isEmpty();
         errorMessage = null;
+        controlsVisible = false;
+        handler.removeCallbacks(hideControls);
+        handler.removeCallbacks(refreshControls);
         if (!videoMode) {
             record("Waiting for video: Surface untouched (NO Canvas.lockCanvas)");
             invalidate();
@@ -272,8 +399,19 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     }
 
     @Override public void onClick(float x, float y) {
-        if (videoMode) togglePlayback();
-        else record("Touch on waiting screen");
+        if (!videoMode) {
+            record("Touch on waiting screen");
+            return;
+        }
+        if (!controlsVisible) {
+            // First touch only reveals the host-rendered controls and time.
+            // Critically: do not touch MediaPlayer or suspend playback here.
+            showControls("First tap: show video controls");
+        } else {
+            // Second touch of the video (not a host button) toggles pause/play.
+            togglePlayback();
+            showControls("Second tap: toggle play/pause");
+        }
     }
 
     private void togglePlayback() {
@@ -291,6 +429,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
 
     @Override public void onSurfaceDestroyed(@NonNull SurfaceContainer s) {
         sourceGeneration++;
+        controlsVisible = false;
+        handler.removeCallbacks(hideControls);
+        handler.removeCallbacks(refreshControls);
         PlaybackForegroundService svc = PlaybackForegroundService.active();
         if (servicePlayback && svc != null) {
             svc.suspendForCarUi("Surface destroyed / OEM rear camera");

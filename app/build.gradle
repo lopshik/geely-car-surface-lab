@@ -9,11 +9,11 @@ android {
     defaultConfig {
         // v0.1 was signed with an ephemeral CI debug key. Keep it intact and install
         // the diagnostic revision side-by-side; do not require uninstalling it.
-        applicationId 'dev.geely.carvideo.preview082'
+        applicationId 'dev.geely.carvideo.preview083'
         minSdk 26
         targetSdk 35
-        versionCode 82
-        versionName '0.8.2-preview'
+        versionCode 83
+        versionName '0.8.3-preview'
     }
 
     buildTypes {

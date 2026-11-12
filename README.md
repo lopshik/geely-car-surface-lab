@@ -52,3 +52,18 @@ Based on owner's screenshot of 0.8.1:
 - Geely library titles are cleaned; no changes to playback service, foreground audio, video Surface, rear camera or per-file bookmark handling.
 - Preview package dev.geely.carvideo.preview082; short Android Auto label CV 082. Separate from 0.8.1 and verified 0.7.1.
 - CI compilation and Android car acceptance are different milestones; do not call this production release before vehicle verification.
+
+## CarVideo 0.8.3 — on-car controls and readable movie list
+
+Based on owner's verified v0.8.2 car log (2026-11-12 07:31–07:39 GMT+03):
+- 1920×1038 video FILL succeeded, audio focus GRANTED and routed to remote-submix, per-file bookmark restored at 16.589s, 89.710s, 123.743s.
+- FIT EGL renderer was ready and decoded video, with 4m50s recorded until screen stopped; user reports playback works. Whether specific display modes have the intended aesthetic requires visual confirmation.
+- Working v0.8.2 commit pinned in archive/verified-carvideo082-20261112 before these UI changes.
+
+New 0.8.3:
+- First touch anywhere on projected video only exposes controls; second touch on bare video toggles play/pause. The host draws controls so no Canvas conflicts with MediaPlayer.
+- While exposed, top bar shows library and two quick actions to cycle speed and picture mode. Right action strip shows seek -10s, pause/play, seek +10s. Position, total time, speed and current fit/fill mode are provided as a host MessageInfo. After 12 seconds, controls auto-hide. No settings Screen is entered, so opening speed/size controls does not trigger screen onStop or unnecessary audio/video pause.
+- NavigationTemplate refresh is supported by Car App Library, but exact positioning/visibility of host-owned controls varies by Android Auto head unit, and host auto-hides action strips after inactivity. This behavior requires in-car acceptance. Video Surface untouched.
+- Library switches from GridTemplate to ListTemplate, no large thumbnails taking away name width. For long titles, first line + wrapping secondary text shows more of the film name; files remain sorted as before, no user search/favorites. Paging obeys host's CONTENT_LIMIT_TYPE_LIST, tested on Geely only after installation.
+- All previously tested playback, audio focus, Surface lifecycle, reverse camera paused resume and one-folder phone library retained. No geely firmware changes. Only use video while the vehicle is parked.
+- Install isolated Preview 083 via existing KingInstaller workflow. Previous 0.8.2 remains available; CI debug APK is not a production release.
