@@ -67,3 +67,15 @@ New 0.8.3:
 - Library switches from GridTemplate to ListTemplate, no large thumbnails taking away name width. For long titles, first line + wrapping secondary text shows more of the film name; files remain sorted as before, no user search/favorites. Paging obeys host's CONTENT_LIMIT_TYPE_LIST, tested on Geely only after installation.
 - All previously tested playback, audio focus, Surface lifecycle, reverse camera paused resume and one-folder phone library retained. No geely firmware changes. Only use video while the vehicle is parked.
 - Install isolated Preview 083 via existing KingInstaller workflow. Previous 0.8.2 remains available; CI debug APK is not a production release.
+
+## CarVideo 0.8.4 — icon clarity + seek-state bugfix
+
+Owner supplied actual car log from v0.8.3 on 2026-11-12: two-stage tap worked, speed 1.25× worked, foreground audio focus GRANTED and remote-submix route, per-movie paused resume at 1475921ms and 1693667ms. The user is happy with the text-list video library but wants skip actions marked numerically “−10” and “+10”, with a distinct speed pictogram.
+
+**Confirmed bug discovered in code:** MediaPlayer.OnSeekCompleteListener installed in onPrepared called finishPreparing on EVERY subsequent user seek, resulting in numerous duplicate “Playing” reports and repeated p.start()/applyRate(), potentially inadvertently resuming a paused film. Android reference explicitly documents the callback for each seekTo. v0.8.4 makes the initial restore seek listener one-shot and clears it before calling finishPreparing. Ordinary seek now stores requested timestamp rather than stale getCurrentPosition, and new skipBy() rate-limits held/repeating AA action events to one every 550ms, using a cumulative target.
+ 
+AA icon changes: the two skip actions show −10 / +10 as high-contrast bitmap action icons; speed action uses a distinct “×” icon rather than the fast-forward arrow. Host may tint or resize custom icons; final legibility requires Geely test. All other controls and the ListTemplate movie catalog are preserved.
+
+**Not claimed:** no image-scaling defect can be established from the user's supplied log alone. Visible [14,14][1788,1038] differs from stable [14,100][1788,1038] as Android Auto host UI changes, not necessarily erroneous aspect ratio. FIT renderer untouched.
+
+Source archive of owner-verified v0.8.3 at archive/verified-carvideo083-20261112. Build and on-car tests are separate. New package dev.geely.carvideo.preview084, short label CV 084, does not replace v0.8.3.

@@ -3,6 +3,10 @@ package dev.geely.carsurfacelab;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Rect;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -122,6 +126,20 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         return getCarContext().getSharedPreferences("lab", Context.MODE_PRIVATE);
     }
 
+    /** Short-number icons stay legible on a compact Android Auto action strip. */
+    private CarIcon textIcon(String text) {
+        Bitmap bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(Color.WHITE);
+        p.setTypeface(android.graphics.Typeface.create(
+                android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD));
+        p.setTextAlign(Paint.Align.CENTER);
+        p.setTextSize(text.length() > 3 ? 32f : 45f);
+        canvas.drawText(text, 48f, 63f, p);
+        return new CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build();
+    }
+
     /** All playback controls are supplied by the Android Auto host. */
     private CarIcon carIcon(int resource) {
         return new CarIcon.Builder(
@@ -146,7 +164,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
 
         if (controlsVisible && videoMode) {
             header.addAction(new Action.Builder()
-                    .setIcon(carIcon(android.R.drawable.ic_media_ff))
+                    .setIcon(textIcon("×"))
                     .setOnClickListener(this::changeSpeedOnSurface).build());
             header.addAction(new Action.Builder()
                     .setIcon(carIcon(android.R.drawable.ic_menu_crop))
@@ -162,7 +180,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
             // does not stop merely because the user wants a different speed.
             ActionStrip strip = new ActionStrip.Builder()
                     .addAction(new Action.Builder()
-                            .setIcon(carIcon(android.R.drawable.ic_media_rew))
+                            .setIcon(textIcon("−10"))
                             .setOnClickListener(() -> seekOnSurface(-10000)).build())
                     .addAction(new Action.Builder()
                             .setIcon(carIcon(isPlaying() ?
@@ -173,7 +191,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                                 showControls("Car play/pause action");
                             }).build())
                     .addAction(new Action.Builder()
-                            .setIcon(carIcon(android.R.drawable.ic_media_ff))
+                            .setIcon(textIcon("+10"))
                             .setOnClickListener(() -> seekOnSurface(10000)).build())
                     .build();
             template.setMapActionStrip(strip);
@@ -249,8 +267,8 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     private void seekOnSurface(long delta) {
         PlaybackForegroundService service = PlaybackForegroundService.active();
         if (service != null) {
-            service.seekTo(service.position()+delta);
-            showControls("Seek " + delta + "ms on Surface");
+            service.skipBy(delta);
+            showControls("Car skip button " + (delta/1000) + "s");
         } else {
             record("Seek requested without service player");
             showControls("No service player for seek");

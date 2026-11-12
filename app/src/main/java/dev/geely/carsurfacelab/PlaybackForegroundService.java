@@ -21,6 +21,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
 import android.media.AudioDeviceInfo;
@@ -44,6 +45,11 @@ public final class PlaybackForegroundService extends Service {
     private Surface hostSurface;
     private AspectSurfaceRenderer aspectRenderer;
     private int playGeneration;
+    private long lastCarSkipUptimeMs;
+    private long lastCarSkipTargetMs;
+    // Android Auto can synthesize dozens of clicks per second for a held action.
+    // Bound the per-click seek rate to avoid flooding the decoder and audio logs.
+    private static final long CAR_SKIP_MIN_INTERVAL_MS = 550L;
     private final Runnable positionTick = new Runnable() {
         @Override public void run() {
             if (player != null && prepared) {
@@ -311,14 +317,21 @@ public final class PlaybackForegroundService extends Service {
                             MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
                     prepared = true;
                     final int count = audioTracks;
-                    p.setOnSeekCompleteListener(ready -> finishPreparing(ready, count));
                     long duration = p.getDuration();
                     if (pendingSeekMs > 0 &&
                             (duration <= 0 || pendingSeekMs < duration - 3000)) {
                         long at = pendingSeekMs;
+                        // One-shot listener: user seeks must NOT re-run
+                        // finishPreparing(), start playback or change pause state.
+                        p.setOnSeekCompleteListener(ready -> {
+                            if (player != ready) return;
+                            ready.setOnSeekCompleteListener(null);
+                            finishPreparing(ready, count);
+                        });
                         report("Prepared; seek to saved position " + at + "ms");
                         p.seekTo(at, MediaPlayer.SEEK_CLOSEST_SYNC);
                     } else {
+                        p.setOnSeekCompleteListener(null);
                         finishPreparing(p, count);
                     }
                 } catch (RuntimeException e) {
@@ -416,9 +429,34 @@ public final class PlaybackForegroundService extends Service {
     public void seekTo(long ms) {
         if (player == null || !prepared) return;
         try {
-            player.seekTo(Math.max(0L, Math.min(ms, duration())), MediaPlayer.SEEK_CLOSEST);
-            savePosition("user-seek");
-        } catch (RuntimeException e) { report("Seek error: " + e.getClass().getSimpleName()); }
+            long max = duration();
+            long target = max > 0 ? Math.max(0L, Math.min(ms, max)) : Math.max(0L, ms);
+            // Seek is asynchronous: getCurrentPosition() immediately after seekTo
+            // can still return the OLD timestamp, so store the requested value.
+            player.seekTo(target, MediaPlayer.SEEK_CLOSEST);
+            if (currentUri != null) {
+                prefs().edit().putLong(positionKey(currentUri), target)
+                        .putLong("last_position_ms", target)
+                        .putString("last_position_reason", "user-seek-request").apply();
+            }
+        } catch (RuntimeException e) {
+            report("Seek error: " + e.getClass().getSimpleName());
+        }
+    }
+
+    public void skipBy(long deltaMs) {
+        if (player == null || !prepared) return;
+        long now = SystemClock.uptimeMillis();
+        if (now - lastCarSkipUptimeMs < CAR_SKIP_MIN_INTERVAL_MS) return;
+        long base = now - lastCarSkipUptimeMs < 1800L
+                ? lastCarSkipTargetMs : position();
+        long max = duration();
+        long target = max > 0 ? Math.max(0L, Math.min(base+deltaMs, max))
+                : Math.max(0L, base+deltaMs);
+        lastCarSkipUptimeMs = now;
+        lastCarSkipTargetMs = target;
+        seekTo(target);
+        report("Car skip " + (deltaMs/1000) + "s -> " + target + "ms");
     }
 
     private static String route(MediaPlayer p) {
@@ -464,6 +502,8 @@ public final class PlaybackForegroundService extends Service {
         ++playGeneration;
         savePosition("player-release");
         prepared = false;
+        lastCarSkipUptimeMs = 0L;
+        lastCarSkipTargetMs = 0L;
         if (player != null) {
             try { player.release(); } catch (RuntimeException ignored) {}
             player = null;
