@@ -58,6 +58,11 @@ public final class DiagnosticsActivity extends Activity {
                 + "\n---- Position ----\n" + p.getLong("last_position_ms",0)
                 + "ms, reason=" + p.getString("last_position_reason","")
                 + ", interrupted=" + p.getBoolean("resume_interrupted",false)
+                + "\n---- USB / Wi-Fi performance ----\n" +
+                        p.getString("telemetry_summary","Нет измерений")
+                + "\n---- Measurements (20 sec, recent) ----\n" +
+                        p.getString("telemetry_samples","")
+                + "\nMeasurement error: " + p.getString("telemetry_error","нет")
                 + "\n---- Library ----\n" + p.getString("catalog_error","ok");
     }
 
@@ -129,6 +134,18 @@ public final class DiagnosticsActivity extends Activity {
         serviceParams.setMargins(0,0,0,dp(8));
         root.addView(startService,serviceParams);
 
+        LinearLayout testRow = new LinearLayout(this);
+        testRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams testParams = new LinearLayout.LayoutParams(-1,dp(47));
+        testParams.setMargins(0,0,0,dp(9));
+        root.addView(testRow,testParams);
+        TextView usb = button("Тест USB",v -> beginTest("USB"));
+        TextView wifi = button("Тест Wi-Fi",v -> beginTest("Wi-Fi"));
+        testRow.addView(usb,new LinearLayout.LayoutParams(0,-1,1));
+        LinearLayout.LayoutParams other = new LinearLayout.LayoutParams(0,-1,1);
+        other.setMargins(dp(8),0,0,0);
+        testRow.addView(wifi,other);
+
         ScrollView scroll = new ScrollView(this);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         reportView = new TextView(this);
@@ -139,6 +156,15 @@ public final class DiagnosticsActivity extends Activity {
         reportView.setBackground(bg(SURFACE));
         scroll.addView(reportView);
         reportView.setText(makeReport());
+    }
+
+    private void beginTest(String mode) {
+        TelemetryMonitor.prepare(this,mode);
+        PlaybackForegroundService service=PlaybackForegroundService.active();
+        if(service!=null)service.restartTelemetry(mode);
+        if(reportView!=null)reportView.setText(makeReport());
+        Toast.makeText(this,"Тест "+mode+" начат. Скопируй лог после просмотра.",
+                Toast.LENGTH_LONG).show();
     }
 
     @Override protected void onResume() {

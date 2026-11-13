@@ -99,3 +99,12 @@ Source license: [Apache License 2.0](LICENSE). Third-party acknowledgments: [NOT
 - Car controls hide after 9 seconds instead of 12. Speed/aspect in the header and +/-10/play in the map strip are removed in the **same template refresh**. Google/Geely's host-managed system bars and the mandatory NavigationTemplate header ActionStrip may still auto-hide on their own schedule (~10s): pixel-perfect synchronization is not controlled by the app.
 - No modifications to MediaPlayer, audio focus, decoder, FIT renderer or reverse-camera lifecycle.
 - RC2 remains a separate CI debug-signed preview package `dev.geely.carvideo.rc2`. Until signed and tested, do not call it a published final production release.
+
+## 1.0 RC3: diagnostic USB vs Wi-Fi experiments
+
+- On Xiaomi choose Log → Test USB or Test Wi-Fi, run the same film for 20–30 minutes while parked, Copy log.
+- Transport is a MANUAL LABEL, not automatically detected by CarVideo. The phone/vehicle may or may not support wireless Android Auto.
+- Every 20 seconds while audio service is active: battery %, battery °C, source of battery charging, instantaneous net battery current and approximate total battery power, thermal Android status, process CPU% of ONE core, process PSS / Java / native heap, video play-time/position/size and error/interruption counts.
+- Summaries and bounded 14K-char sample history. No additional storage permissions or continuous background task after service stops.
+- Metrics from the Google Android Auto host, real FPS, frame drop rates, GPU% and projected link bitrate are NOT available using ordinary APIs. No claim of measuring pure CarVideo power use; phone charging changes energy measurement substantially.
+- The owner-tested release candidate remains unchanged in main; RC3 is a distinct debug-signed install for evaluation.
