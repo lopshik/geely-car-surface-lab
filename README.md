@@ -89,3 +89,13 @@ This produces a **debug-signed experimental build**, not a production-signed rel
 **Safety and limitations:** For use only while safely parked. This project has no reliable gear/speed interlock, and Android Auto does not list video as a supported app category. It uses a navigation Surface experimentally. Do not use it while driving; compatibility may break with host updates. This project is not affiliated with or endorsed by Geely, Google or OpenAI.
 
 Source license: [Apache License 2.0](LICENSE). Third-party acknowledgments: [NOTICE.md](NOTICE.md).
+
+
+## 1.0.0 RC2 — owner-requested minimal finishing changes
+
+- On the phone's movie list, a separate red **✕** button beside each film requests deletion of exactly that file. A native confirmation dialog explicitly warns that this is permanent storage deletion, not just removal from the library. Cancel is the default safe choice. No automatic deletion.
+- Document deletion uses the official SAF `DocumentsContract.deleteDocument` API on the file returned from the user-selected folder, only if the app holds the persisted write grant; denied/unsupported operations show an error and leave the library intact. If earlier folder permission was read-only, the user must choose the folder again and authorize write. The app never requests broad/all-files access. No deletion of other entries, folders, or file sets.
+- Deletion of the currently projected file is blocked while the car Surface is connected. On confirmed success, only the deleted movie's bookmark/private thumbnail are cleared and the single chosen folder is rescanned on a worker thread; no UI thread file IO.
+- Car controls hide after 9 seconds instead of 12. Speed/aspect in the header and +/-10/play in the map strip are removed in the **same template refresh**. Google/Geely's host-managed system bars and the mandatory NavigationTemplate header ActionStrip may still auto-hide on their own schedule (~10s): pixel-perfect synchronization is not controlled by the app.
+- No modifications to MediaPlayer, audio focus, decoder, FIT renderer or reverse-camera lifecycle.
+- RC2 remains a separate CI debug-signed preview package `dev.geely.carvideo.rc2`. Until signed and tested, do not call it a published final production release.

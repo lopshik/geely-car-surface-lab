@@ -45,7 +45,9 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     private boolean servicePlayback, videoMode, closed, screenStarted;
     private boolean controlsVisible;
     private CarIcon rewindTenIcon, forwardTenIcon, playbackSpeedIcon;
-    private static final long CONTROLS_HIDE_MS = 12000L;
+    // Host-owned top/bottom action strips usually auto-hide after about 10 s.
+    // Remove both app-controlled groups together just before that timeout.
+    private static final long CONTROLS_HIDE_MS = 9000L;
     private final Runnable hideControls = () -> {
         if (controlsVisible && !closed) {
             controlsVisible = false;
