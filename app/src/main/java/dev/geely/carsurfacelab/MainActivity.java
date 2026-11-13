@@ -1,6 +1,9 @@
 package dev.geely.carsurfacelab;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.UriPermission;
+import android.provider.DocumentsContract;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
@@ -40,6 +43,7 @@ public final class MainActivity extends Activity {
     private SeekBar timeline;
     private int shown = 40;
     private boolean dragging, optionsExpanded;
+    private boolean deletionInProgress;
     private boolean lastSelected;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -255,6 +259,7 @@ public final class MainActivity extends Activity {
     private void pickFolder() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(intent,CHOOSE_FOLDER);
     }
@@ -265,8 +270,11 @@ public final class MainActivity extends Activity {
                 data == null || data.getData() == null) return;
         Uri uri = data.getData();
         try {
-            getContentResolver().takePersistableUriPermission(
-                    uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            int returned = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            if ((returned & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0)
+                throw new SecurityException("No read permission to video folder");
+            getContentResolver().takePersistableUriPermission(uri, returned);
         } catch (SecurityException e) {
             Toast.makeText(this,"Не удалось сохранить доступ к папке",
                     Toast.LENGTH_LONG).show();
@@ -345,8 +353,18 @@ public final class MainActivity extends Activity {
             }
             item.addView(details,new LinearLayout.LayoutParams(0,-1,1f));
             TextView arrow = text("▶",18,ACCENT,true);
-            arrow.setPadding(dp(8),0,dp(5),0);
+            arrow.setPadding(dp(8),0,dp(2),0);
             item.addView(arrow);
+
+            // The movie row still selects a film. Delete is a separate,
+            // accessible 44dp target and can NEVER act without confirmation.
+            TextView remove = text("✕",21,0xFFFF8C8C,true);
+            remove.setGravity(Gravity.CENTER);
+            remove.setMinWidth(dp(44));
+            remove.setMinHeight(dp(44));
+            remove.setContentDescription("Удалить файл: " + movie.title);
+            remove.setOnClickListener(v -> confirmDelete(movie));
+            item.addView(remove,new LinearLayout.LayoutParams(dp(44),dp(48)));
 
             item.setOnClickListener(v -> {
                 if (prefs().getBoolean("surface_connected",false) &&
@@ -356,6 +374,106 @@ public final class MainActivity extends Activity {
                 updatePlaying();
             });
         }
+    }
+
+    /** A persistent *write* grant is required: earlier versions only asked to read. */
+    private boolean hasFolderWritePermission() {
+        String raw = prefs().getString("video_folder_uri",null);
+        if (raw == null) return false;
+        Uri tree = Uri.parse(raw);
+        for (UriPermission grant : getContentResolver().getPersistedUriPermissions()) {
+            if (tree.equals(grant.getUri()) && grant.isWritePermission()) return true;
+        }
+        return false;
+    }
+
+    private void confirmDelete(MediaCatalog.Entry movie) {
+        if (deletionInProgress) return;
+        // Deleting the actively projected file can invalidate the decoder's source
+        // and conflict with the OEM camera. The user must stop it first.
+        if (movie.uri.equals(prefs().getString("video_uri",null)) &&
+                prefs().getBoolean("surface_connected",false)) {
+            Toast.makeText(this,
+                    "Останови этот фильм на Geely перед удалением",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!hasFolderWritePermission()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Нет разрешения на удаление")
+                    .setMessage("Android разрешил только просмотр. Выбери папку ещё раз " +
+                            "и предоставь доступ к её изменению. Файл пока не затронут.")
+                    .setNegativeButton("Отмена",null)
+                    .setPositiveButton("Выбрать папку",(dialog,which) -> pickFolder())
+                    .show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Удалить файл безвозвратно?")
+                .setMessage(movie.title + "\n\nФайл исчезнет из памяти телефона, " +
+                        "а не только из видеотеки. Отменить удаление нельзя.")
+                .setNegativeButton("Оставить",null)
+                .setPositiveButton("Удалить",(dialog,which) -> deleteConfirmed(movie))
+                .show();
+    }
+
+    private void deleteConfirmed(MediaCatalog.Entry movie) {
+        if (deletionInProgress) return;
+        deletionInProgress = true;
+        new Thread(() -> {
+            boolean deleted = false;
+            String failure = null;
+            int count = -1;
+            try {
+                String folderRaw = prefs().getString("video_folder_uri",null);
+                if (folderRaw == null) throw new SecurityException("Папка не выбрана");
+                Uri tree = Uri.parse(folderRaw);
+                Uri doc = Uri.parse(movie.uri);
+                // Only delete entries that originated from this selected tree.
+                if (!tree.getAuthority().equals(doc.getAuthority()) ||
+                        !DocumentsContract.getTreeDocumentId(tree)
+                                .equals(DocumentsContract.getTreeDocumentId(doc))) {
+                    throw new SecurityException("Файл не принадлежит выбранной папке");
+                }
+                boolean inCatalog = false;
+                for (MediaCatalog.Entry existing : MediaCatalog.all(getApplicationContext())) {
+                    if (movie.uri.equals(existing.uri)) { inCatalog = true; break; }
+                }
+                if (!inCatalog) throw new SecurityException("Файл отсутствует в видеотеке");
+                if (movie.uri.equals(prefs().getString("video_uri",null)) &&
+                        prefs().getBoolean("surface_connected",false)) {
+                    throw new IllegalStateException("Видео сейчас открыто на Geely");
+                }
+                deleted = DocumentsContract.deleteDocument(getContentResolver(),doc);
+                if (!deleted) throw new IllegalStateException(
+                        "Провайдер не поддерживает удаление этого файла");
+                MediaCatalog.forgetDeleted(getApplicationContext(),movie);
+                count = MediaCatalog.scanFolder(getApplicationContext());
+            } catch (Exception e) {
+                android.util.Log.w("CarVideo.Delete","Document deletion failed",e);
+                failure = e.getMessage();
+                if (failure == null || failure.trim().isEmpty())
+                    failure = e.getClass().getSimpleName();
+            }
+            final boolean success = deleted;
+            final String reason = failure;
+            final int scanned = count;
+            runOnUiThread(() -> {
+                deletionInProgress = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (success) {
+                    Toast.makeText(this,scanned >= 0 ?
+                            "Файл удалён" : "Файл удалён, но список не обновился",
+                            Toast.LENGTH_LONG).show();
+                    renderCatalog();
+                    updatePlaying();
+                } else {
+                    new AlertDialog.Builder(this).setTitle("Не удалось удалить")
+                            .setMessage(reason == null ? "Android отклонил удаление" : reason)
+                            .setPositiveButton("Понятно",null).show();
+                }
+            });
+        },"CarVideo-delete-selected-file").start();
     }
 
     private void startAudio() {

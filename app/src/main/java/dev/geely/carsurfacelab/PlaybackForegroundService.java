@@ -60,9 +60,13 @@ public final class PlaybackForegroundService extends Service {
         }
     };
     private int focusResult = Integer.MIN_VALUE;
+    private TelemetryMonitor telemetry;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     public static PlaybackForegroundService active() { return instance; }
+    public void restartTelemetry(String mode) {
+        if (telemetry != null) telemetry.begin(mode);
+    }
 
     @Override
     public void onCreate() {
@@ -88,6 +92,8 @@ public final class PlaybackForegroundService extends Service {
         session.setActive(true);
         updateSession(false);
         instance = this;
+        telemetry = new TelemetryMonitor(this);
+        telemetry.start();
         report("Foreground audio service started");
         handler.postDelayed(positionTick, 3000);
         // If the user chose a file while Android Auto Surface was already open,
@@ -178,6 +184,7 @@ public final class PlaybackForegroundService extends Service {
         if (!(speed == 0.75f || speed == 1f || speed == 1.25f ||
                 speed == 1.5f || speed == 2f)) speed = 1f;
         prefs().edit().putFloat("playback_rate", speed).apply();
+        TelemetryMonitor.mark(this,"speed");
         if (player != null && prepared) {
             // setPlaybackParams(nonzero) STARTS the player on Android.
             // Never invoke it while paused (including after the rear camera).
@@ -210,6 +217,7 @@ public final class PlaybackForegroundService extends Service {
     public void changePicture(String mode) {
         if (!"fit".equals(mode) && !"fill".equals(mode)) return;
         prefs().edit().putString("picture_mode", mode).apply();
+        TelemetryMonitor.mark(this,"aspect");
         Surface host = hostSurface;
         Uri uri = currentUri;
         boolean shouldPlay = playing();
@@ -221,6 +229,7 @@ public final class PlaybackForegroundService extends Service {
 
     public void play(Uri uri, Surface surface, boolean autoPlay) {
         stopPlayback();
+        TelemetryMonitor.mark(this,"prepares");
         int generation = ++playGeneration;
         hostSurface = surface;
         currentUri = uri;
@@ -295,6 +304,8 @@ public final class PlaybackForegroundService extends Service {
             mp.setLooping(true);
             mp.setOnVideoSizeChangedListener((p, w, h) -> {
                 if (aspectFit && aspectRenderer != null) aspectRenderer.videoSize(w, h);
+                prefs().edit().putInt("telemetry_video_width",w)
+                        .putInt("telemetry_video_height",h).apply();
                 report("Video decoded: " + w + "x" + h +
                         "; image mode=" + (aspectFit ? "FIT" : "FILL"));
             });
@@ -339,6 +350,7 @@ public final class PlaybackForegroundService extends Service {
                 }
             });
             mp.setOnErrorListener((p, what, extra) -> {
+                TelemetryMonitor.mark(this,"errors");
                 report("MediaPlayer error " + what + "/" + extra);
                 updateSession(false);
                 return true;
@@ -405,6 +417,7 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void suspendForCarUi(String reason) {
+        if (player != null && prepared) TelemetryMonitor.mark(this,"interruptions");
         savePosition(reason);
         prefs().edit().putBoolean("resume_interrupted", true).apply();
         stopPlayback();
@@ -525,6 +538,7 @@ public final class PlaybackForegroundService extends Service {
     @Override
     public void onDestroy() {
         handler.removeCallbacks(positionTick);
+        if (telemetry != null) {telemetry.stop(); telemetry = null;}
         report("Foreground service destroyed");
         stopPlayback();
         instance = null;

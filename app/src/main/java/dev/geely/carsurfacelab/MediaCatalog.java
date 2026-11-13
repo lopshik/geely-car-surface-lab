@@ -315,6 +315,26 @@ public final class MediaCatalog {
                 .putString("video_uri", e.uri).apply();
     }
 
+    /** Forget only the verified-deleted entry, never any other media file. */
+    public static void forgetDeleted(Context context, Entry movie) {
+        SharedPreferences preferences = prefs(context);
+        SharedPreferences.Editor editor = preferences.edit()
+                .remove(PlaybackForegroundService.positionKey(Uri.parse(movie.uri)));
+        if (movie.uri.equals(preferences.getString("video_uri",null))) {
+            editor.remove("video_uri")
+                    .remove("resume_interrupted")
+                    .remove("last_position_ms")
+                    .remove("last_position_reason");
+        }
+        editor.apply();
+        POSTER_CACHE.remove(movie.uri);
+        // Disposable thumbnail in this application's own private cache only.
+        File cached = posterFile(context,movie);
+        if (cached.exists() && !cached.delete()) {
+            Log.d(TAG,"Could not clear private thumbnail cache");
+        }
+    }
+
     /** Cache-only fast path for Android Auto's binder thread. Never decode video there. */
     public static Bitmap poster(Context c, Entry e) {
         Bitmap cache = POSTER_CACHE.get(e.uri);
