@@ -122,3 +122,7 @@ This work is in a separate `feat/carvideo-iptv-m3u` branch and the package `dev.
 - The app explicitly enables cleartext HTTP because some user-provided IPTV providers use HTTP. This weakens network confidentiality for those channels; prefer HTTPS streams where possible.
 - Not copied from Fermata (GPL-3.0), no Fermata source files are used. CarVideo remains Apache-2.0.
 - Live stream playback, host volume route, aspect FIT and FILL, buffering/retry and provider-specific headers require on-car validation. TV Preview is **not** the owner-accepted 1.0 release. Video on car display only when safely parked.
+
+### LoganetTV user-provided playlist tests (2026-11-15)
+
+The owner provided two direct subscription URLs: `https://loganettv.github.io/playlists/kids.m3u` and `https://loganettv.github.io/playlists/movie.m3u`. The public upstream GitHub repository contained 39 and 136 EXTINF entries respectively when inspected, including Telegram support links that must not be treated as playable TV channels. This is playlist metadata verification, **not** playback proof. The TV screen contains a one-tap optional preset to add both URLs; it is never enabled automatically. Multiple M3U subscriptions are refreshed with independent last-good source caches, so one failed provider does not erase another provider's working channels. Streaming rights, reliability and actual Geely playback remain unverified.

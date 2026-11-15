@@ -15,3 +15,7 @@ Source code licensed under the Apache License, Version 2.0. See LICENSE.
 No proprietary Geely software or car-firmware binaries are bundled with this source repository. No third-party movie/video content is distributed with it.
 
 For corrections, licensing concerns or verified upstream code attributions, open a GitHub issue.
+
+## IPTV playlist examples
+
+The optional one-tap presets `kids.m3u` and `movie.m3u` are externally maintained public playlist URLs created/curated by **loganettv**. Source: https://github.com/loganettv/playlists ; original author information: https://pikabu.ru/story/novosti_loganettv__bolee_500_telekanalov_besplatno_160726_14156806 . CarVideo does not redistribute the playlist files or television streams, does not claim ownership or endorse their content, and cannot verify licensing or permanence of third-party media streams. The users must ensure they have the rights to watch the selected channels.
