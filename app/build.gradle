@@ -32,6 +32,6 @@ dependencies {
     implementation 'androidx.car.app:app:1.7.0'
     // Official Android Auto projected implementation, previously missing.
     implementation 'androidx.car.app:app-projected:1.7.0'
-    implementation 'androidx.media3:media3-exoplayer:1.11.1'
-    implementation 'androidx.media3:media3-exoplayer-hls:1.11.1'
+    implementation 'androidx.media3:media3-exoplayer:1.8.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.8.1'
 }
