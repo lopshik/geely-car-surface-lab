@@ -27,6 +27,18 @@ import android.view.Surface;
 import android.media.AudioDeviceInfo;
 
 import androidx.annotation.Nullable;
+import androidx.media3.common.C;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.common.VideoSize;
+import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.exoplayer.ExoPlayer;
+
+import java.util.HashMap;
+import java.util.Map;
 
 public final class PlaybackForegroundService extends Service {
     private static final String CHANNEL = "car_surface_playback";
@@ -37,6 +49,9 @@ public final class PlaybackForegroundService extends Service {
     private AudioManager audioManager;
     private AudioFocusRequest focusRequest;
     private MediaPlayer player;
+    // TV uses Media3; the owner-tested local MediaPlayer remains untouched.
+    private ExoPlayer tvPlayer;
+    private int tvRetries;
     private MediaSession session;
     private Uri currentUri;
     private long pendingSeekMs;
@@ -256,6 +271,10 @@ public final class PlaybackForegroundService extends Service {
         focusResult = audioManager.requestAudioFocus(focusRequest);
         report("Audio focus request = " + focusName(focusResult));
         boolean fit = "fit".equals(configuredPicture());
+        boolean tv = "http".equalsIgnoreCase(uri.getScheme()) ||
+                "https".equalsIgnoreCase(uri.getScheme());
+        if (tv) report("TV live stream selected; Media3 player, " +
+                (fit ? "FIT" : "FILL") + ", autoPlay=" + autoPlay);
         if (fit) {
             // Correct letterbox with no aspect distortion on the host's fixed Surface.
             // Extra compositor is opt-in; direct fill remains the efficient default.
@@ -266,13 +285,17 @@ public final class PlaybackForegroundService extends Service {
                 @Override public void onReady(Surface decoder) {
                     if (generation != playGeneration || currentUri == null) return;
                     report("Aspect FIT renderer ready");
-                    initializePlayer(uri, decoder, attributes, true);
+                    if (tv) initializeTv(uri, decoder, attributes, true, generation);
+                    else initializePlayer(uri, decoder, attributes, true);
                 }
                 @Override public void onFailure(String reason) {
                     if (generation != playGeneration || currentUri == null) return;
                     report("FIT EGL failure: " + reason + "; trying direct FILL");
                     if (aspectRenderer != null) { aspectRenderer.close(); aspectRenderer = null; }
-                    if (player == null) initializePlayer(uri, surface, attributes, false);
+                    if (player == null && tvPlayer == null) {
+                        if (tv) initializeTv(uri, surface, attributes, false, generation);
+                        else initializePlayer(uri, surface, attributes, false);
+                    }
                 }
             });
             aspectRenderer = renderer;
@@ -283,7 +306,8 @@ public final class PlaybackForegroundService extends Service {
                     prefs().getInt("video_safe_bottom",prefs().getInt("surface_height",1052)));
             renderer.start();
         } else {
-            initializePlayer(uri, surface, attributes, false);
+            if (tv) initializeTv(uri, surface, attributes, false, generation);
+            else initializePlayer(uri, surface, attributes, false);
         }
     }
 
@@ -365,6 +389,110 @@ public final class PlaybackForegroundService extends Service {
         }
     }
 
+    /**
+     * Separate live-TV media pipeline. ExoPlayer handles HLS playlist reloads,
+     * adaptive variant selection, progressive network streams and buffering.
+     * All operations are invoked on the service main thread.
+     */
+    private void initializeTv(Uri uri, Surface target, AudioAttributes platformAttrs,
+                              boolean fit, int generation) {
+        String stage="create";
+        try {
+            Map<String,String> headers=new HashMap<>();
+            String userAgent="CarVideo/1.1 Android";
+            String channelId=prefs().getString("tv_channel_id","");
+            for(TvCatalog.Channel c:TvCatalog.all(this)){
+                if(c.id.equals(channelId)){
+                    if(!c.userAgent.isEmpty())userAgent=c.userAgent;
+                    if(!c.referer.isEmpty())headers.put("Referer",c.referer);
+                    break;
+                }
+            }
+            DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
+                    .setUserAgent(userAgent)
+                    .setConnectTimeoutMs(10000)
+                    .setReadTimeoutMs(12000)
+                    .setAllowCrossProtocolRedirects(true);
+            if(!headers.isEmpty())http.setDefaultRequestProperties(headers);
+            DefaultDataSource.Factory dataSources=new DefaultDataSource.Factory(this,http);
+            ExoPlayer live=new ExoPlayer.Builder(this)
+                    .setMediaSourceFactory(new androidx.media3.exoplayer.source
+                            .DefaultMediaSourceFactory(dataSources)).build();
+            tvPlayer=live;
+            stage="surface";
+            live.setVideoSurface(target);
+            androidx.media3.common.AudioAttributes attributes=
+                    new androidx.media3.common.AudioAttributes.Builder()
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                            .setUsage(C.USAGE_MEDIA).build();
+            // The Service already owns the platform AudioFocusRequest.
+            live.setAudioAttributes(attributes,false);
+            live.addListener(new Player.Listener(){
+                @Override public void onPlaybackStateChanged(int state) {
+                    if(tvPlayer!=live||generation!=playGeneration)return;
+                    if(state==Player.STATE_BUFFERING){
+                        report("TV buffering");
+                    } else if(state==Player.STATE_READY){
+                        prepared=true;
+                        updateSession(live.isPlaying());
+                        report("TV ready; playing="+live.isPlaying()+
+                                ", duration="+live.getDuration());
+                    } else if(state==Player.STATE_ENDED){
+                        prepared=false;
+                        updateSession(false);
+                        report("TV stream ended");
+                    }
+                }
+                @Override public void onIsPlayingChanged(boolean playing) {
+                    if(tvPlayer!=live||generation!=playGeneration)return;
+                    updateSession(playing);
+                    report("TV "+(playing?"playing":"paused / buffering"));
+                }
+                @Override public void onVideoSizeChanged(VideoSize size) {
+                    if(tvPlayer!=live||generation!=playGeneration)return;
+                    if(fit && aspectRenderer!=null) {
+                        int corrected=(int)(size.width*size.pixelWidthHeightRatio);
+                        aspectRenderer.videoSize(Math.max(1,corrected),size.height);
+                    }
+                    prefs().edit().putInt("telemetry_video_width",size.width)
+                            .putInt("telemetry_video_height",size.height).apply();
+                    report("TV decoded "+size.width+"x"+size.height);
+                }
+                @Override public void onPlayerError(PlaybackException error) {
+                    if(tvPlayer!=live||generation!=playGeneration)return;
+                    TelemetryMonitor.mark(PlaybackForegroundService.this,"errors");
+                    // Do not report URL or signed source token in public diagnostics.
+                    report("TV playback failed: "+error.errorCodeName);
+                    if(tvRetries++<3 && hostSurface!=null && hostSurface.isValid()){
+                        long delay=1500L<<(tvRetries-1);
+                        handler.postDelayed(()->{
+                            if(tvPlayer!=live || generation!=playGeneration ||
+                                    hostSurface==null||!hostSurface.isValid())return;
+                            report("TV retry "+tvRetries);
+                            live.seekToDefaultPosition();
+                            live.prepare();
+                        },delay);
+                    }
+                }
+            });
+            stage="media item";
+            MediaItem.Builder item=new MediaItem.Builder().setUri(uri);
+            String lower=uri.toString().toLowerCase(java.util.Locale.ROOT);
+            if(lower.contains(".m3u8") || lower.contains("format=m3u8") ||
+                    lower.contains("type=hls"))
+                item.setMimeType(MimeTypes.APPLICATION_M3U8);
+            live.setMediaItem(item.build());
+            live.setPlayWhenReady(startAfterPrepared);
+            stage="prepare";
+            live.prepare();
+            report("TV preparing (network stream); autoPlay="+startAfterPrepared);
+        }catch(RuntimeException e){
+            TelemetryMonitor.mark(this,"errors");
+            report("TV setup failed at "+stage+": "+e.getClass().getSimpleName());
+            stopPlayback();
+        }
+    }
+
     private void finishPreparing(MediaPlayer p, int audioTracks) {
         if (player != p) return;
         try {
@@ -417,7 +545,8 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void suspendForCarUi(String reason) {
-        if (player != null && prepared) TelemetryMonitor.mark(this,"interruptions");
+        if ((player != null && prepared) || tvPlayer != null)
+            TelemetryMonitor.mark(this,"interruptions");
         savePosition(reason);
         prefs().edit().putBoolean("resume_interrupted", true).apply();
         stopPlayback();
@@ -425,16 +554,22 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public long position() {
+        if (tvPlayer != null) return Math.max(0L,tvPlayer.getCurrentPosition());
         if (player == null || !prepared) return prefs().getLong("last_position_ms", 0);
         try { return player.getCurrentPosition(); }
         catch (RuntimeException e) { return 0; }
     }
     public long duration() {
+        if (tvPlayer != null) {
+            long length=tvPlayer.getDuration();
+            return length==C.TIME_UNSET?0:Math.max(0,length);
+        }
         if (player == null || !prepared) return 0;
         try { return player.getDuration(); }
         catch (RuntimeException e) { return 0; }
     }
     public boolean playing() {
+        if (tvPlayer != null) return tvPlayer.isPlaying();
         if (player == null || !prepared) return false;
         try { return player.isPlaying(); }
         catch (RuntimeException e) { return false; }
@@ -484,6 +619,11 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void toggle() {
+        if (tvPlayer != null) {
+            if(tvPlayer.isPlaying()) pause();
+            else resume();
+            return;
+        }
         if (player == null) return;
         try {
             if (player.isPlaying()) pause();
@@ -492,6 +632,12 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void pause() {
+        if (tvPlayer != null) {
+            tvPlayer.pause();
+            updateSession(false);
+            report("TV paused");
+            return;
+        }
         if (player == null || !prepared) return;
         try {
             if (player.isPlaying()) player.pause();
@@ -502,6 +648,13 @@ public final class PlaybackForegroundService extends Service {
     }
 
     public void resume() {
+        if (tvPlayer != null) {
+            tvPlayer.play();
+            prefs().edit().putBoolean("resume_interrupted",false).apply();
+            updateSession(true);
+            report("TV resume requested");
+            return;
+        }
         if (player == null || !prepared) return;
         try {
             player.start();
@@ -522,6 +675,11 @@ public final class PlaybackForegroundService extends Service {
             try { player.release(); } catch (RuntimeException ignored) {}
             player = null;
         }
+        if (tvPlayer != null) {
+            tvPlayer.release();
+            tvPlayer = null;
+        }
+        tvRetries=0;
         currentUri = null;
         hostSurface = null;
         if (aspectRenderer != null) {
