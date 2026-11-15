@@ -102,22 +102,43 @@ public final class TvActivity extends Activity {
         TextView title=label("‹  Телевидение",24,true);
         title.setOnClickListener(v->finish());
         root.addView(title,spaced(0,12));
-        TextView intro=label("Добавь ссылку M3U. Список обновляется при открытии"+
-                " (не чаще раза в 6 часов) или по кнопке. Каналы воспроизводятся на ГУ.",13,false);
+        TextView intro=label("Добавь до 8 ссылок M3U (по одной в строке)."+
+                " Списки обновляются не чаще раза в 6 часов или вручную."+
+                " У каждой подписки сохраняется последняя рабочая копия.",13,false);
         intro.setTextColor(MUTED);
         root.addView(intro,spaced(0,11));
 
         url=new EditText(this);
-        url.setSingleLine(true);
+        url.setSingleLine(false);
+        url.setMinLines(2);
+        url.setMaxLines(5);
         url.setTextSize(14);
         url.setTextColor(TEXT);
         url.setHintTextColor(MUTED);
-        url.setHint("https://адрес/playlist.m3u");
-        url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        url.setHint("Один URL M3U в каждой строке (до 8)");
+        url.setInputType(InputType.TYPE_CLASS_TEXT |
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE |
+                InputType.TYPE_TEXT_VARIATION_URI);
         url.setBackground(background(PANEL));
         url.setPadding(dp(13),dp(10),dp(13),dp(10));
         url.setText(TvCatalog.sourceUrl(this));
         root.addView(url,spaced(0,9));
+
+        TextView loganet=button("Добавить LoganetTV: Детям + Кино",v -> {
+            String kids="https://loganettv.github.io/playlists/kids.m3u";
+            String movies="https://loganettv.github.io/playlists/movie.m3u";
+            String before=url.getText().toString().trim();
+            java.util.List<String> existing=new java.util.ArrayList<>();
+            for(String line:before.split("[\\n;,]+")) {
+                if(!line.trim().isEmpty() && !existing.contains(line.trim()))
+                    existing.add(line.trim());
+            }
+            if(!existing.contains(kids))existing.add(kids);
+            if(!existing.contains(movies))existing.add(movies);
+            url.setText(android.text.TextUtils.join("\n",existing));
+            saveUrl();
+        });
+        root.addView(loganet,spaced(0,9));
 
         LinearLayout actions=horizontal();
         TextView save=button("Сохранить URL",v->saveUrl());
