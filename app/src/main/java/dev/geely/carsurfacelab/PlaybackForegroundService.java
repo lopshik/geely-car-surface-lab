@@ -462,7 +462,7 @@ public final class PlaybackForegroundService extends Service {
                     if(tvPlayer!=live||generation!=playGeneration)return;
                     TelemetryMonitor.mark(PlaybackForegroundService.this,"errors");
                     // Do not report URL or signed source token in public diagnostics.
-                    report("TV playback failed: "+error.errorCodeName);
+                    report("TV playback failed: "+error.getErrorCodeName());
                     if(tvRetries++<3 && hostSurface!=null && hostSurface.isValid()){
                         long delay=1500L<<(tvRetries-1);
                         handler.postDelayed(()->{
