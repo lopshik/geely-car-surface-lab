@@ -41,11 +41,18 @@ public final class CarLibraryScreen extends Screen {
         int limit = c.getCarService(ConstraintManager.class)
                 .getContentLimit(ConstraintManager.CONTENT_LIMIT_TYPE_LIST);
         int capacity = Math.max(2, Math.min(12, limit > 0 ? limit : 6));
-        int filmsPerPage = Math.max(1, capacity-1);
+        int filmsPerPage = Math.max(1, capacity-2);
         int pages = Math.max(1, (movies.size()+filmsPerPage-1)/filmsPerPage);
         page = Math.max(0,Math.min(page,pages-1));
 
         ItemList.Builder list = new ItemList.Builder();
+        if(page==0){
+            list.addItem(new Row.Builder().setTitle("Телевидение")
+                    .addText("M3U · каналы и группы")
+                    .setOnClickListener(() ->
+                            getScreenManager().push(new TvListScreen(getCarContext())))
+                    .build());
+        }
         int start=page*filmsPerPage;
         int end=Math.min(movies.size(),start+filmsPerPage);
         for (int i=start;i<end;i++) {

@@ -312,6 +312,7 @@ public final class MediaCatalog {
     public static void choose(Context c, Entry e) {
         // Clearing interruption is intentional user selection, not a gear change.
         prefs(c).edit().putBoolean("resume_interrupted", false)
+                .putString("video_kind","file")
                 .putString("video_uri", e.uri).apply();
     }
 

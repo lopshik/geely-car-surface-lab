@@ -108,3 +108,17 @@ Source license: [Apache License 2.0](LICENSE). Third-party acknowledgments: [NOT
 - Summaries and bounded 14K-char sample history. No additional storage permissions or continuous background task after service stops.
 - Metrics from the Google Android Auto host, real FPS, frame drop rates, GPU% and projected link bitrate are NOT available using ordinary APIs. No claim of measuring pure CarVideo power use; phone charging changes energy measurement substantially.
 - The owner-tested release candidate remains unchanged in main; RC3 is a distinct debug-signed install for evaluation.
+
+
+## TV Preview 1.1 — user-supplied, auto-refreshing M3U IPTV
+
+This work is in a separate `feat/carvideo-iptv-m3u` branch and the package `dev.geely.carvideo.tv11`. Existing RC3 and the accepted movie video path are preserved.
+
+- Phone: TV button, user-supplied URL, explicit refresh, automatic refresh on opening if the last successful update is older than 6 hours, cached last successful channel list when offline, genre/group filtering and Favorites.
+- Android Auto: movie library has TV entry; car TV screen has text-only channel categories with paging and selection. Video controls map previous/next channel to the previous/next arrows; pause/play still works.
+- URLs with extension `.m3u8` use AndroidX Media3 ExoPlayer HLS, which adapts quality to available network capacity. Other HTTP(S) progressive streams are attempted via the Media3 extractor pipeline. Local file MediaPlayer code remains separate.
+- Supports EXTINF names, group-title, tvg-id, tvg-logo metadata, EXTGRP and some EXTVLCOPT User-Agent/Referer directives; no supplier channels or streaming credentials are bundled.
+- Refresh is *on use*, never an always-running background poll. Cache has 1500 channel and 2MB playlist limits; HTTP errors retain the last successful list.
+- The app explicitly enables cleartext HTTP because some user-provided IPTV providers use HTTP. This weakens network confidentiality for those channels; prefer HTTPS streams where possible.
+- Not copied from Fermata (GPL-3.0), no Fermata source files are used. CarVideo remains Apache-2.0.
+- Live stream playback, host volume route, aspect FIT and FILL, buffering/retry and provider-specific headers require on-car validation. TV Preview is **not** the owner-accepted 1.0 release. Video on car display only when safely parked.

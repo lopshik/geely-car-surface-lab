@@ -145,6 +145,11 @@ public final class MainActivity extends Activity {
         LinearLayout header = row();
         TextView name = text("CarVideo",25,TEXT,true);
         header.addView(name,new LinearLayout.LayoutParams(0,-2,1f));
+        TextView tvButton = button("ТВ",false,40,v ->
+                startActivity(new Intent(this,TvActivity.class)));
+        LinearLayout.LayoutParams tvParams=new LinearLayout.LayoutParams(dp(52),dp(40));
+        tvParams.setMargins(0,0,dp(7),0);
+        header.addView(tvButton,tvParams);
         TextView logButton = button("Лог",false,40,v ->
                 startActivity(new Intent(this,DiagnosticsActivity.class)));
         header.addView(logButton,new LinearLayout.LayoutParams(dp(56),dp(40)));
@@ -518,24 +523,28 @@ public final class MainActivity extends Activity {
 
     private void updatePlaying() {
         if (nowTitle == null) return;
-        MediaCatalog.Entry entry = MediaCatalog.selected(this);
-        boolean selected = entry != null;
+        boolean tv = TvCatalog.isTvSelected(this);
+        MediaCatalog.Entry entry = tv ? null : MediaCatalog.selected(this);
+        boolean selected = entry != null || tv;
         if (selected != lastSelected) {
             playbackControls.setVisibility(selected?View.VISIBLE:View.GONE);
             lastSelected = selected;
         }
-        nowTitle.setText(selected?MediaCatalog.displayTitle(entry.title):"Фильм не выбран");
+        nowTitle.setText(tv ? "ТВ · " +
+                TvCatalog.prefs(this).getString("tv_channel_name","Канал") :
+                selected ? MediaCatalog.displayTitle(entry.title) : "Фильм не выбран");
         PlaybackForegroundService s = PlaybackForegroundService.active();
         boolean connected=prefs().getBoolean("surface_connected",false);
         nowStatus.setText(!selected?"Выбери фильм в списке ниже" :
                 s!=null&&s.playing()?"▶ Играет на Geely" :
                 connected?"Готов к воспроизведению на Geely":"Выбран для Geely");
         if (selected) {
-            long pos = s!=null?s.position():prefs().getLong(
+            long pos = s!=null?s.position():tv?0:prefs().getLong(
                     PlaybackForegroundService.positionKey(Uri.parse(entry.uri)),0);
             long duration = s!=null?s.duration():0;
-            nowTime.setText(MediaCatalog.time(pos)+" / "+
+            nowTime.setText(tv?"Прямой эфир":MediaCatalog.time(pos)+" / "+
                     (duration>0?MediaCatalog.time(duration):"--:--"));
+            timeline.setEnabled(!tv);
             if(!dragging && duration>0)
                 timeline.setProgress((int)Math.min(1000,pos*1000/duration));
         }

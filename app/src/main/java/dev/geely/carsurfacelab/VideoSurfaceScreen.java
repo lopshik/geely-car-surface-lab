@@ -158,17 +158,20 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     @NonNull @Override public Template onGetTemplate() {
         ActionStrip.Builder header = new ActionStrip.Builder();
         header.addAction(new Action.Builder()
-                .setTitle("Видеотека")
+                .setTitle(TvCatalog.isTvSelected(getCarContext())?"ТВ / фильмы":"Видеотека")
                 .setOnClickListener(() -> {
                     controlsVisible = false;
                     handler.removeCallbacks(hideControls);
-                        getScreenManager().push(new CarLibraryScreen(getCarContext()));
+                        getScreenManager().push(TvCatalog.isTvSelected(getCarContext()) ?
+                            new TvListScreen(getCarContext()) :
+                            new CarLibraryScreen(getCarContext()));
                 }).build());
 
         if (controlsVisible && videoMode) {
-            header.addAction(new Action.Builder()
-                    .setIcon(textIcon("×"))
-                    .setOnClickListener(this::changeSpeedOnSurface).build());
+            if (!TvCatalog.isTvSelected(getCarContext()))
+                header.addAction(new Action.Builder()
+                        .setIcon(textIcon("×"))
+                        .setOnClickListener(this::changeSpeedOnSurface).build());
             header.addAction(new Action.Builder()
                     .setIcon(carIcon(android.R.drawable.ic_menu_crop))
                     .setOnClickListener(this::changePictureOnSurface).build());
@@ -183,7 +186,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
             // does not stop merely because the user wants a different speed.
             ActionStrip strip = new ActionStrip.Builder()
                     .addAction(new Action.Builder()
-                            .setIcon(textIcon("−10"))
+                            .setIcon(textIcon(TvCatalog.isTvSelected(getCarContext())?"◀":"−10"))
                             .setOnClickListener(() -> seekOnSurface(-10000)).build())
                     .addAction(new Action.Builder()
                             .setIcon(carIcon(isPlaying() ?
@@ -194,7 +197,7 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
                                 showControls("Car play/pause action");
                             }).build())
                     .addAction(new Action.Builder()
-                            .setIcon(textIcon("+10"))
+                            .setIcon(textIcon(TvCatalog.isTvSelected(getCarContext())?"▶":"+10"))
                             .setOnClickListener(() -> seekOnSurface(10000)).build())
                     .build();
             template.setMapActionStrip(strip);
@@ -261,6 +264,14 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
     }
 
     private void seekOnSurface(long delta) {
+        if(TvCatalog.isTvSelected(getCarContext())) {
+            TvCatalog.Channel next=TvCatalog.adjacent(getCarContext(),delta<0?-1:1);
+            if(next!=null) {
+                TvCatalog.select(getCarContext(),next);
+                showControls("TV channel changed");
+            }
+            return;
+        }
         PlaybackForegroundService service = PlaybackForegroundService.active();
         if (service != null) {
             if (service.skipBy(delta)) {
@@ -298,6 +309,8 @@ public final class VideoSurfaceScreen extends Screen implements SurfaceCallback 
         int generation = ++sourceGeneration;
         releasePlayer();
         String chosen = prefs().getString("video_uri", null);
+        if(TvCatalog.isTvSelected(getCarContext()) && chosen != null)
+            chosen = TvCatalog.resolvedSelectedUrl(getCarContext(),chosen);
         videoMode = chosen != null && !chosen.isEmpty();
         errorMessage = null;
         controlsVisible = false;
