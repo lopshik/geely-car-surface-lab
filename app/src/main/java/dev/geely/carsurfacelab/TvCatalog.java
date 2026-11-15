@@ -39,6 +39,8 @@ public final class TvCatalog {
     public static final long REFRESH_INTERVAL_MS = 6L*60L*60L*1000L;
     private static final int MAX_BYTES = 2_000_000;
     private static final int MAX_CHANNELS = 1500;
+    private static final int MAX_SOURCES = 8;
+    private static final long FAILURE_RETRY_MS = 10L*60L*1000L;
     private static final int MAX_REDIRECTS = 3;
     private static final int MAX_UI_TEXT = 120;
     private static final String PREFS = "lab";
@@ -80,8 +82,25 @@ public final class TvCatalog {
         return "tv".equals(prefs(c).getString("video_kind","file"));
     }
 
+    /** Multiline input: one HTTP(S) playlist URL per line (up to 8). */
+    public static List<String> sourceUrls(Context c) {
+        return parseSources(sourceUrl(c));
+    }
+
     public static String sourceUrl(Context c) {
         return prefs(c).getString("tv_source_url","");
+    }
+
+    private static List<String> parseSources(String raw) {
+        List<String> results=new ArrayList<>();
+        if(raw==null)return results;
+        // Support newline, semicolon, or comma separated direct M3U URLs.
+        for(String item:raw.replace("\r","\n").split("[\n;,]+")) {
+            String candidate=item.trim();
+            if(!candidate.isEmpty() && !results.contains(candidate))
+                results.add(candidate);
+        }
+        return results;
     }
 
     public static boolean validHttpUrl(String raw) {
@@ -96,21 +115,31 @@ public final class TvCatalog {
     }
 
     public static boolean configure(Context c,String raw) {
-        String url=raw==null?"":raw.trim();
-        if(!validHttpUrl(url))return false;
-        String old=sourceUrl(c);
+        List<String> urls=parseSources(raw);
+        if(urls.isEmpty()||urls.size()>MAX_SOURCES)return false;
+        for(String url:urls) if(!validHttpUrl(url))return false;
+        String normalized=android.text.TextUtils.join("\n",urls);
+        if(normalized.equals(sourceUrl(c)))return true;
         SharedPreferences.Editor e=prefs(c).edit()
-                .putString("tv_source_url",url)
+                .putString("tv_source_url",normalized)
                 .putLong("tv_last_success",0L)
+                .putLong("tv_last_attempt",0L)
                 .remove("tv_error");
-        if(!old.equals(url)){
-            e.putString("tv_catalog","[]");
-            cachedJson=null;
-            memoryCache=null;
-            e.remove("tv_favorites");
-        }
         e.apply();
+        // Retain per-source caches for unchanged URLs; refresh() combines them.
         return true;
+    }
+
+    /** Stable key avoids persisting URL (and possibly tokens) as JSON keys. */
+    private static String sourceKey(String value) {
+        return stableId("source", "", value);
+    }
+
+    private static String defaultGroupForSource(String source) {
+        String lower=source.toLowerCase(Locale.ROOT);
+        if(lower.endsWith("/kids.m3u"))return "Детям";
+        if(lower.endsWith("/movie.m3u"))return "Кино";
+        return "";
     }
 
     public static List<Channel> all(Context c) {
@@ -209,14 +238,17 @@ public final class TvCatalog {
         String stamp=last==0?"не обновлялся":
                 android.text.format.DateFormat.format("dd.MM HH:mm",last).toString();
         String error=p.getString("tv_error","");
-        return all(c).size()+" каналов · "+stamp+
+        return all(c).size()+" каналов / "+sourceUrls(c).size()+" источников · "+stamp+
                 (error.isEmpty()?"":" · Обновление не удалось (сохранён старый список)");
     }
 
     public static void refreshIfStale(Context context,Consumer<String> callback) {
         SharedPreferences p=prefs(context);
-        if(System.currentTimeMillis()-p.getLong("tv_last_success",0L) <
-                REFRESH_INTERVAL_MS && !all(context).isEmpty()) {
+        long now=System.currentTimeMillis();
+        long lastSuccess=p.getLong("tv_last_success",0L);
+        long lastAttempt=p.getLong("tv_last_attempt",0L);
+        if((now-lastSuccess<REFRESH_INTERVAL_MS && !all(context).isEmpty()) ||
+                (now-lastAttempt<FAILURE_RETRY_MS && !all(context).isEmpty())) {
             if(callback!=null)UI.post(()->callback.accept(status(context)));
             return;
         }
@@ -229,40 +261,79 @@ public final class TvCatalog {
             if(callback!=null)UI.post(()->callback.accept("Обновление уже выполняется"));
             return;
         }
-        String source=sourceUrl(app);
-        if(!validHttpUrl(source)){
-            if(callback!=null)UI.post(()->callback.accept("Сначала введи URL M3U"));
+        List<String> urls=sourceUrls(app);
+        if(urls.isEmpty()){
+            if(callback!=null)UI.post(()->callback.accept("Добавь хотя бы один URL M3U"));
             return;
         }
         fetching=true;
         WORKER.execute(()-> {
+            int success=0,failed=0;
             String result;
+            SharedPreferences preferences=prefs(app);
+            preferences.edit().putLong("tv_last_attempt",System.currentTimeMillis()).apply();
+            JSONObject sourceCache;
+            try {sourceCache=new JSONObject(preferences.getString("tv_per_source","{}"));}
+            catch(Exception ignored){sourceCache=new JSONObject();}
+            for(String source:urls) {
+                try {
+                    String body=fetchText(source);
+                    List<Channel> playlist=parsePlaylist(body,source);
+                    if(playlist.isEmpty())throw new IllegalArgumentException(
+                            "No supported channel URLs");
+                    JSONArray array=new JSONArray();
+                    for(Channel channel:playlist)array.put(channel.toJson());
+                    sourceCache.put(sourceKey(source),array);
+                    success++;
+                } catch(Exception ex) {
+                    failed++;
+                    Log.w(TAG,"TV source refresh failed: "+ex.getClass().getSimpleName());
+                    // Keep last known good channels for THIS source.
+                }
+            }
             try {
-                String content=fetchText(source);
-                List<Channel> channels=parsePlaylist(content,source);
-                if(channels.isEmpty())throw new IllegalArgumentException(
-                        "Нет поддерживаемых HTTP(S) телеканалов");
-                JSONArray json=new JSONArray();
-                for(Channel channel:channels)json.put(channel.toJson());
-                String raw=json.toString();
-                // A saved URL may be changed on the phone while a fetch is in-flight:
-                // never overwrite the new playlist with an old source response.
-                if(!source.equals(sourceUrl(app))) {
-                    result="Источник изменён; повтори обновление";
+                if(!urls.equals(sourceUrls(app))) {
+                    result="Адреса изменились во время обновления — повтори запрос";
                 } else {
-                    prefs(app).edit().putString("tv_catalog",raw)
-                            .putLong("tv_last_success",System.currentTimeMillis())
-                            .remove("tv_error").apply();
-                    cachedJson=raw;
-                    memoryCache=Collections.unmodifiableList(channels);
-                    result=channels.size()+" телеканалов обновлено";
+                    List<Channel> combined=new ArrayList<>();
+                    Set<String> duplicates=new HashSet<>();
+                    for(String source:urls) {
+                        JSONArray entries=sourceCache.optJSONArray(sourceKey(source));
+                        if(entries==null)continue;
+                        for(int i=0;i<entries.length() && combined.size()<MAX_CHANNELS;i++) {
+                            JSONObject row=entries.optJSONObject(i);
+                            if(row==null)continue;
+                            Channel ch=Channel.fromJson(row);
+                            if(!validHttpUrl(ch.url))continue;
+                            // Ensure each playlist can contain multiple variants and
+                            // names without tvg-id accidentally erasing HD versions.
+                            String key=sourceKey(source)+":"+ch.id;
+                            if(duplicates.add(key))combined.add(ch);
+                        }
+                    }
+                    if(combined.isEmpty())throw new IllegalStateException(
+                            "Нет сохранённых телеканалов");
+                    JSONArray catalog=new JSONArray();
+                    for(Channel ch:combined) catalog.put(ch.toJson());
+                    String encoded=catalog.toString();
+                    SharedPreferences.Editor e=preferences.edit()
+                            .putString("tv_per_source",sourceCache.toString())
+                            .putString("tv_catalog",encoded);
+                    if(failed==0)e.putLong("tv_last_success",System.currentTimeMillis())
+                            .remove("tv_error");
+                    else e.putString("tv_error",failed+" подписок не обновилось");
+                    e.apply();
+                    cachedJson=encoded;
+                    memoryCache=Collections.unmodifiableList(combined);
+                    result=combined.size()+" каналов из "+urls.size()+
+                            " источников; обновлено "+success+
+                            (failed>0?", ошибок "+failed:"");
                 }
             } catch(Exception e) {
-                // No network URI, token, password or entire response in logs.
-                String type=e.getClass().getSimpleName();
-                Log.w(TAG,"Playlist refresh failed: "+type);
-                prefs(app).edit().putString("tv_error",type).apply();
-                result="Не удалось обновить ("+type+"). Старый список сохранён.";
+                // Keep old merged cache even if no network source was reachable.
+                result="Не удалось обновить. Последний список сохранён.";
+                preferences.edit().putString("tv_error",
+                        e.getClass().getSimpleName()).apply();
             } finally {
                 fetching=false;
             }
@@ -318,7 +389,7 @@ public final class TvCatalog {
     }
 
     private static String stableId(String id,String group,String name){
-        String input=!id.isEmpty()?id:(group+"|"+name);
+        String input=(!id.isEmpty()?id+"|":"")+group+"|"+name;
         try{
             byte[] hash=MessageDigest.getInstance("SHA-256")
                     .digest(input.getBytes(StandardCharsets.UTF_8));
@@ -359,7 +430,13 @@ public final class TvCatalog {
                 referer=line.substring("#EXTVLCOPT:http-referrer=".length()).trim();
             }else if(line.charAt(0)!='#' && name!=null){
                 String resolved=new URL(new URL(base),line).toString();
-                if(validHttpUrl(resolved)){
+                // Channel lists can include Telegram/support links that are
+                // not playable streams. Don't turn those into phantom channels.
+                if(validHttpUrl(resolved) &&
+                        !resolved.contains("t.me/") && !resolved.contains("telegram.me/")){
+                    String sourceCategory=defaultGroupForSource(base);
+                    if(!sourceCategory.isEmpty() && "Другие".equals(group))
+                        group=sourceCategory;
                     String stable=stableId(id,group,name);
                     if(seen.add(stable)){
                         result.add(new Channel(stable,name,group,resolved,logo,
